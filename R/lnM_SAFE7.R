@@ -208,13 +208,13 @@ compare_methods <- function(x1, x2, s1, s2,
 set.seed(123)
 
 # Independent example
-compare_methods(x1 = 21.3, x2 = 17.1,
-                s1 = 2.7,  s2 = 2.1,
+compare_methods(x1 = 5, x2 = 5,
+                s1 = 1,  s2 = 1,
                 n1 = 40,   n2 = 40,
                 B  = 1e5, chunk = 4000)
 
 # Paired example (r = 0.8)
-compare_methods(x1 = 21.3, x2 = 17.1,
-                s1 = 2.7,  s2 = 2.1,
-                n1 = 40,   r  = 0.5,
+compare_methods(x1 = 5, x2 = 5,
+                s1 = 1,  s2 = 1,
+                n1 = 40,   r  = 0.8,
                 B  = 1e5, chunk = 4000)
