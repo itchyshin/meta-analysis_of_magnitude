@@ -12,7 +12,7 @@ theme_set(theme_bw(11))
 ## ---------------------------------------------------------------------
 ##  Data-adaptive ε  (single global κ*, local Δlo)  <<<<<<<<<<<<<<<<<<<
 ## ---------------------------------------------------------------------
-KAPPA <- 0.25        # <-  one-time calibration constant (see note)
+KAPPA <- 0.15        # <-  one-time calibration constant (see note)
 
 ## helper that *always* keeps Δ positive with the local ε
 mk_pos <- function(eps) function(x) pmax(x, eps)
