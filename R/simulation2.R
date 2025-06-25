@@ -346,7 +346,9 @@ results <- do.call(rbind, res_list)
 
 #write.csv(results, "lnM_sim_results_full_robust.csv", row.names = FALSE)
 
-resutls <- read.csv("lnM_sim_results_full_robust.csv")
+library(ggpot2)  # for graphics)
+
+results <- read.csv("lnM_sim_results_full_robust.csv")
 
 ## ---------- 6. graphics ----------------------------------------------## =====================================================================
 ##  A.  Bias of the point estimators  (Δ-method vs SAFE)
