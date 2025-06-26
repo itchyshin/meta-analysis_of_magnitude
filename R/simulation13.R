@@ -9,6 +9,8 @@ library(MASS)        # mvrnorm()
 library(ggplot2)     # plotting
 library(dplyr)       # later facet ordering
 library(parallel)    # multicore
+
+library(pbapply) 
 theme_set(theme_bw(11))
 
 ## ---------- 0. globals & helpers ------------------------------------
@@ -288,26 +290,39 @@ runner <- function(i) {
 }
 
 ## --- PARALLEL outer loop --------------------------------------------
-n_cores_total <- detectCores(logical = FALSE)  # physical cores
-n_cores_use   <- max(1, n_cores_total - 2)     # keep two free
+## use all cores except two, but never less than one
+n_cores_use <- max(1L, parallel::detectCores() - 2L)
 
-message(sprintf("Detected %d cores, using %d",
-                n_cores_total, n_cores_use))
+pbop <- pbapply::pboptions(type = "txt")   # plain-text progress bar
 
-## optional — nice outer progress bar
-
-## optional — nice outer progress bar
-pb <- txtProgressBar(min = 0, max = nrow(param_grid), style = 3)
-
-results <- vector("list", nrow(param_grid))
-for (i in seq_len(nrow(param_grid))) {
-  results[[i]] <- runner(i)
-  setTxtProgressBar(pb, i)
+if (.Platform$OS.type == "windows") {
+  
+  ## ---- Windows: explicit PSOCK cluster ------------------------------
+  cl <- parallel::makeCluster(n_cores_use)
+  ## export everything the workers need
+  parallel::clusterExport(cl, ls(envir = .GlobalEnv), envir = .GlobalEnv)
+  
+  results_list <- pbapply::pblapply(
+    X   = seq_len(nrow(param_grid)),
+    FUN = runner,
+    cl  = cl                          # <- cluster object
+  )
+  
+  parallel::stopCluster(cl)
+  
+} else {
+  
+  ## ---- Unix / macOS: forked processes -------------------------------
+  results_list <- pbapply::pblapply(
+    X   = seq_len(nrow(param_grid)),
+    FUN = runner,
+    cl  = n_cores_use                 # <- *number* of cores to fork
+  )
 }
-close(pb)
 
-results <- do.call(rbind, results)
+pbapply::pboptions(pbop)  # restore previous pbapply settings
 
+results <- do.call(rbind, results_list)
 
 ## ---------- 6. simple plot example  ----------------------------------
 ## (unchanged – legend label “delta” → “PI”)
