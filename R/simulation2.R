@@ -230,7 +230,8 @@ set.seed(20250625)
 
 K_repl  <- 1000
 B_boot  <- 1e4
-n_cores <- max(1, detectCores() - 1)
+n_cores <- 100
+#max(1, detectCores() - 1)
 use_fork <- (.Platform$OS.type != "windows")
 
 runner <- function(i) {
@@ -346,7 +347,7 @@ results <- do.call(rbind, res_list)
 
 #write.csv(results, "lnM_sim_results_full_robust.csv", row.names = FALSE)
 
-resutls <- read.csv("lnM_sim_results_full_robust.csv")
+results <- read.csv("lnM_sim_results_full_robust.csv")
 
 ## ---------- 6. graphics ----------------------------------------------## =====================================================================
 ##  A.  Bias of the point estimators  (Δ-method vs SAFE)
