@@ -230,7 +230,8 @@ set.seed(20250625)
 
 K_repl  <- 1000
 B_boot  <- 1e4
-n_cores <- max(1, detectCores() - 1)
+n_cores <- 100
+#max(1, detectCores() - 1)
 use_fork <- (.Platform$OS.type != "windows")
 
 runner <- function(i) {
