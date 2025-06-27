@@ -330,21 +330,82 @@ write.csv(results,
 ## -------- 6. quick Bias plot example ---------------------------------
 results <- readRDS(here("Rdata", "lnM_summary_2025-06-26.rds"))
 
-results$facet_label <- with(results,
-                            paste0(design, " n1=", n1, " n2=", n2))
-bias_df <- rbind(
-  data.frame(results[, c("theta", "facet_label")],
-             estimator = "delta", bias = results$delta_bias),
-  data.frame(results[, c("theta", "facet_label")],
-             estimator = "SAFE",  bias = results$safe_bias))
+# 2. Make a combined facet label ----------------------------------------
 
-ggplot(bias_df,
-       aes(theta, bias, colour = estimator, group = estimator)) +
-  geom_hline(yintercept = 0, linetype = 2, colour = "grey50") +
+results <- results %>%
+  mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
+
+# 3. Define the new ordering: 3 rows × 4 cols --------------------------
+
+facet_info <- results %>%
+  distinct(facet_label, design, n1, n2)
+
+balanced_ind   <- facet_info %>%
+  filter(design == "indep", n1 == n2) %>%
+  arrange(n1) %>%
+  pull(facet_label)
+
+unbalanced_ind <- facet_info %>%
+  filter(design == "indep", n1 != n2) %>%
+  arrange(n1) %>%
+  pull(facet_label)
+
+paired_balanced <- facet_info %>%
+  filter(design == "paired") %>%
+  arrange(n1) %>%
+  pull(facet_label)
+
+new_levels <- c(balanced_ind, unbalanced_ind, paired_balanced)
+
+results <- results %>%
+  mutate(facet_label = factor(facet_label, levels = new_levels))
+
+# 4. Absolute‐bias plot -------------------------------------------------
+
+bias_df <- bind_rows(
+  results %>% select(theta, facet_label, delta_bias) %>%
+    rename(bias = delta_bias) %>% mutate(estimator = "delta"),
+  results %>% select(theta, facet_label, safe_bias) %>%
+    rename(bias = safe_bias)  %>% mutate(estimator = "SAFE")
+)
+
+p_bias <- ggplot(bias_df,
+                 aes(theta, bias, colour = estimator, group = estimator)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
   geom_line() +
-  facet_wrap(~ facet_label, ncol = 4) +
-  labs(x = "theta", y = "Bias (estimate – true lnM)") +
-  scale_colour_manual(values = c(delta = "firebrick",
-                                 SAFE  = "steelblue"),
-                      labels = c(delta = "PI", SAFE = "SAFE")) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
+  labs(x = "theta",
+       y = "Bias (estimate \u2212 true lnM)",
+       colour = "Estimator") +
+  scale_colour_manual(
+    values = c(delta = "firebrick", SAFE = "steelblue"),
+    labels = c(delta = "PI", SAFE = "SAFE")
+  ) +
   theme_bw(11)
+
+print(p_bias)
+
+# 5. Relative‐bias of variance plot ------------------------------------
+
+rb_df <- bind_rows(
+  results %>% select(theta, facet_label, relbias_delta) %>%
+    rename(relbias = relbias_delta) %>% mutate(estimator = "delta"),
+  results %>% select(theta, facet_label, relbias_safe) %>%
+    rename(relbias = relbias_safe)  %>% mutate(estimator = "SAFE")
+)
+
+p_relbias <- ggplot(rb_df,
+                    aes(theta, relbias, colour = estimator, group = estimator)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_line() +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
+  labs(x = "theta",
+       y = "Relative bias of Var (%)",
+       colour = "Estimator") +
+  scale_colour_manual(
+    values = c(delta = "firebrick", SAFE = "steelblue"),
+    labels = c(delta = "PI", SAFE = "SAFE")
+  ) +
+  theme_bw(11)
+
+print(p_relbias)

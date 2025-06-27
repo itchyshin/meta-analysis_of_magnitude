@@ -393,8 +393,12 @@ p_rmse <- ggplot(rmse_df,
 mean(abs(results$delta_bias), na.rm = TRUE)  # average Δ-method bias
 mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
 
-mean(abs(results$relbias_delta), na.rm = TRUE)  # average Δ-method bias
-mean(abs(results$relbias_safe) , na.rm = TRUE)  # average SAFE-BC bias
+mean(abs(results$relbias_delta), na.rm = TRUE) 
+mean(abs(results$relbias_safe) , na.rm = TRUE) 
 
-mean(abs(results$mcse_bias_delta), na.rm = TRUE)  # average Δ-method bias
-mean(abs(results$mcse_bias_safe) , na.rm = TRUE)  # average SAFE-BC bias
+mean(abs(results$mcse_bias_delta), na.rm = TRUE)  
+mean(abs(results$mcse_bias_safe) , na.rm = TRUE)  
+
+mean(abs(results$mcse_varbar_delta), na.rm = TRUE) 
+mean(abs(results$mcse_varbar_safe) , na.rm = TRUE) 
+
