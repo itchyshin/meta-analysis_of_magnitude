@@ -395,3 +395,6 @@ mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
 
 mean(abs(results$relbias_delta), na.rm = TRUE)  # average Δ-method bias
 mean(abs(results$relbias_safe) , na.rm = TRUE)  # average SAFE-BC bias
+
+mean(abs(results$mcse_bias_delta), na.rm = TRUE)  # average Δ-method bias
+mean(abs(results$mcse_bias_safe) , na.rm = TRUE)  # average SAFE-BC bias

@@ -1,3 +1,6 @@
+# simulation on Shinichi's machine
+
+
 ########################################################################
 ## lnM  – simulation, summary & graphics (Delta-method vs SAFE-BC)
 ## * ASCII-only, multicore outer loop, verbose progress *

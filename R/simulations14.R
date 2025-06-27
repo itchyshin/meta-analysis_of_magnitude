@@ -10,6 +10,7 @@ library(ggplot2)     # plotting
 library(dplyr)       # facet ordering
 library(parallel)    # multicore helpers
 library(pbapply)     # progress bars for *apply
+library(here)       # file paths relative to this script
 theme_set(theme_bw(11))
 
 ## -------- 0. globals & helpers ---------------------------------------
@@ -327,6 +328,8 @@ write.csv(results,
           row.names = FALSE)
 
 ## -------- 6. quick Bias plot example ---------------------------------
+results <- readRDS(here("Rdata", "lnM_summary_2025-06-26.rds"))
+
 results$facet_label <- with(results,
                             paste0(design, " n1=", n1, " n2=", n2))
 bias_df <- rbind(
