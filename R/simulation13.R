@@ -208,8 +208,8 @@ param_grid <- rbind(grid_ind, grid_dep)
 
 ## ---------- 5. simulation driver (parallel outer loop) --------------
 set.seed(20250625)
-K_repl <- 1e5        # per parameter set
-B_boot <- 1e5         # bootstrap size
+K_repl <- 100        # per parameter set
+B_boot <- 1e4         # bootstrap size
 
 outer_verbose <- TRUE        # print at row completion
 inner_every   <- 100         # message every 100 replicates
@@ -327,6 +327,9 @@ pbapply::pboptions(pbop)  # restore previous pbapply settings
 
 results <- do.call(rbind, results_list)
 
+
+write.csv(results, "data/lnM_SAFE13_results.csv")
+
 ## ---------- 6. simple plot example  ----------------------------------
 ## (unchanged – legend label “delta” → “PI”)
 results$facet_label <- with(results,
@@ -349,3 +352,60 @@ p_bias <- ggplot(bias_df,
                                  SAFE  = "SAFE")) +
   theme_bw(11)
 print(p_bias)
+
+# B. relative bias of variance
+rb_df <- rbind(
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="delta", relbias=results$relbias_delta),
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="SAFE",  relbias=results$relbias_safe)
+)
+p_rb <- ggplot(rb_df,
+               aes(theta, relbias, colour=estimator, group=estimator)) +
+  geom_hline(yintercept=0, linetype=2, colour="grey50") +
+  geom_line() +
+  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
+  labs(x=expression(theta), y="Relative bias of Var (%)") +
+  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue"))
+print(p_rb)
+
+# C. coverage
+cov_df <- rbind(
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="delta", cover=results$cover_delta),
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="SAFE",  cover=results$cover_safe)
+)
+p_cov <- ggplot(cov_df,
+                aes(theta, cover, colour=estimator, group=estimator)) +
+  geom_hline(yintercept=0.95, linetype=2, colour="grey50") +
+  geom_line() +
+  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
+  labs(x=expression(theta), y="Empirical coverage") +
+  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue"))
+print(p_cov)
+
+# D. RMSE
+rmse_df <- rbind(
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="delta", rmse=results$rmse_delta),
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="SAFE",  rmse=results$rmse_safe)
+)
+p_rmse <- ggplot(rmse_df,
+                 aes(theta, rmse, colour=estimator, group=estimator)) +
+  geom_line(size=0.8) +
+  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
+  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue")) +
+  labs(x=expression(theta),
+       y="RMSE ( ln M̂ − ln M )",
+       colour=NULL) +
+  theme_bw(11)
+print(p_rmse)
+
+# average abs(bias)
+mean(abs(results$delta_bias), na.rm = TRUE)  # average Δ-method bias
+mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
+
+mean(abs(results$relbias_delta), na.rm = TRUE)  # average Δ-method bias
+mean(abs(results$relbias_safe) , na.rm = TRUE)  # average SAFE-BC bias
