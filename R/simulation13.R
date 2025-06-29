@@ -330,6 +330,9 @@ results <- do.call(rbind, results_list)
 
 write.csv(results, "data/lnM_SAFE13_results.csv")
 
+results <- read.csv("data/lnM_SAFE13_results.csv",
+                       row.names = 1, check.names = FALSE)
+
 ## ---------- 6. simple plot example  ----------------------------------
 ## (unchanged – legend label “delta” → “PI”)
 results$facet_label <- with(results,
