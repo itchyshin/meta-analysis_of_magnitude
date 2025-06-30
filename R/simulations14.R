@@ -391,7 +391,7 @@ write.csv(results,
           row.names = FALSE)
 
 ## -------- 6. quick Bias plot example ---------------------------------
-results <- readRDS(here("Rdata", "lnM_summary_2025-06-30.rds"))
+#results <- readRDS(here("Rdata", "lnM_summary_2025-06-30.rds"))
 
 # 2. Make a combined facet label ----------------------------------------
 
@@ -473,6 +473,40 @@ p_relbias <- ggplot(rb_df,
 
 print(p_relbias)
 
+# C. coverage
+cov_df <- rbind(
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="delta", cover=results$cover_delta),
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="SAFE",  cover=results$cover_safe)
+)
+p_cov <- ggplot(cov_df,
+                aes(theta, cover, colour=estimator, group=estimator)) +
+  geom_hline(yintercept=0.95, linetype=2, colour="grey50") +
+  geom_line() +
+  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
+  labs(x=expression(theta), y="Empirical coverage") +
+  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue"))
+print(p_cov)
+
+# D. RMSE
+rmse_df <- rbind(
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="delta", rmse=results$rmse_delta),
+  data.frame(results[,c("theta","design","n1","n2")],
+             estimator="SAFE",  rmse=results$rmse_safe)
+)
+p_rmse <- ggplot(rmse_df,
+                 aes(theta, rmse, colour=estimator, group=estimator)) +
+  geom_line() +
+  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
+  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue")) +
+  labs(x=expression(theta),
+       y="RMSE ( ln M̂ − ln M )",
+       colour=NULL) +
+  theme_bw(11)
+
+print(p_rmse)
 # average abs(bias)
 mean(abs(results$delta_bias), na.rm = TRUE)  # average Δ-method bias
 mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
@@ -480,8 +514,8 @@ mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
 mean(abs(results$relbias_delta), na.rm = TRUE) 
 mean(abs(results$relbias_safe) , na.rm = TRUE) 
 
-mean(abs(results$mcse_bias_delta), na.rm = TRUE)  
-mean(abs(results$mcse_bias_safe) , na.rm = TRUE)  
+mean(results$mcse_bias_delta, na.rm = TRUE)  
+mean(results$mcse_bias_safe, na.rm = TRUE)  
 
-mean(abs(results$mcse_varbar_delta), na.rm = TRUE) 
-mean(abs(results$mcse_varbar_safe) , na.rm = TRUE) 
+mean(results$mcse_varbar_delta, na.rm = TRUE) 
+mean(results$mcse_varbar_safe , na.rm = TRUE) 
