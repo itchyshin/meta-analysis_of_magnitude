@@ -391,7 +391,7 @@ write.csv(results,
           row.names = FALSE)
 
 ## -------- 6. quick Bias plot example ---------------------------------
-results <- readRDS(here("Rdata", "lnM_summary_2025-06-26.rds"))
+results <- readRDS(here("Rdata", "lnM_summary_2025-06-30.rds"))
 
 # 2. Make a combined facet label ----------------------------------------
 
@@ -472,3 +472,16 @@ p_relbias <- ggplot(rb_df,
   theme_bw(11)
 
 print(p_relbias)
+
+# average abs(bias)
+mean(abs(results$delta_bias), na.rm = TRUE)  # average Δ-method bias
+mean(abs(results$safe_bias), na.rm = TRUE)  # average SAFE-BC bias
+
+mean(abs(results$relbias_delta), na.rm = TRUE) 
+mean(abs(results$relbias_safe) , na.rm = TRUE) 
+
+mean(abs(results$mcse_bias_delta), na.rm = TRUE)  
+mean(abs(results$mcse_bias_safe) , na.rm = TRUE)  
+
+mean(abs(results$mcse_varbar_delta), na.rm = TRUE) 
+mean(abs(results$mcse_varbar_safe) , na.rm = TRUE) 
