@@ -72,77 +72,128 @@ lnM_delta_dep <- function(x1, x2, s1, s2, n, rho) {
 
 ## -------- 2. SAFE-BC bootstrap (indep & paired) -----------------------
 ## (only the kernel name changed → lnM_core)
+
 safe_ind <- function(x1bar, x2bar, s1, s2, n1, n2,
-                     B = 1e4, chunk = 5e3) {
-  h  <- n1 * n2 / (n1 + n2); n0 <- 2 * h
+                     B = 1e4, chunk = 5e3,
+                     eps = .Machine$double.eps) {
+
+  h   <- n1 * n2 / (n1 + n2)
+  n0  <- 2 * h
   MSB0 <- h * (x1bar - x2bar)^2
   MSW0 <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
-  if (MSB0 <= MSW0)
-    return(list(pt = NA, var = NA, lo = NA, hi = NA,
-                kept = 0L, total = B))
-  z_raw <- lnM_core(MSB0 - MSW0, MSW0, n0)
+
+  ## always continue – coerce Δ > 0 if needed
+  Delta0 <- max(MSB0 - MSW0, eps)
+  z_raw  <- lnM_core(Delta0, MSW0, n0)
+
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- diag(c(s1^2 / n1, s2^2 / n2,
                 2 * s1^4 / (n1 - 1), 2 * s2^4 / (n2 - 1)))
-  cloud <- numeric(B); kept <- 0L; k <- 0L
+
+  cloud <- numeric(B)
+  kept  <- 0L           # accepted & *stored*
+  tried <- 0L           # total proposal draws
+  k     <- 0L           # pointer in the cloud
+
   while (k < B) {
-    d  <- mvrnorm(chunk, mu, Sig)
-    ok <- d[, 3] > 0 & d[, 4] > 0
+
+    d     <- mvrnorm(chunk, mu, Sig)
+    tried <- tried + nrow(d)
+
+    ok <- d[, 3] > 0 & d[, 4] > 0          # variances must be positive
     if (!any(ok)) next
-    m1 <- d[ok, 1]; m2 <- d[ok, 2]
-    v1 <- d[ok, 3]; v2 <- d[ok, 4]
+
+    m1  <- d[ok, 1]; m2 <- d[ok, 2]
+    v1  <- d[ok, 3]; v2 <- d[ok, 4]
     MSB <- h * (m1 - m2)^2
     MSW <- ((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2)
-    use <- MSB > MSW
+    use <- MSB > MSW                       # admissible proposals
     if (!any(use)) next
-    kept <- kept + sum(use)
+
     vals <- lnM_core(MSB[use] - MSW[use], MSW[use], n0)
     take <- min(length(vals), B - k)
-    cloud[(k + 1):(k + take)] <- vals[1:take]; k <- k + take
+
+    cloud[(k + 1L):(k + take)] <- vals[1:take]
+    k    <- k + take
+    kept <- kept + take                    # only what we *store*
   }
-  cloud <- cloud[1:B]
-  m_boot <- mean(cloud); pt <- 2 * z_raw - m_boot; v_est <- var(cloud)
-  cen <- cloud - m_boot; qs <- quantile(cen, c(0.025, 0.975))
-  list(pt = pt, var = v_est,
-       lo = pt + qs[1], hi = pt + qs[2],
-       kept = kept, total = B)
+
+  m_boot <- mean(cloud)
+  pt     <- 2 * z_raw - m_boot
+  v_est  <- var(cloud)
+  cen    <- cloud - m_boot
+  qs     <- quantile(cen, c(0.025, 0.975))
+
+  list(pt    = pt,
+       var   = v_est,
+       lo    = pt + qs[1],
+       hi    = pt + qs[2],
+       kept  = kept,
+       tried = tried)
 }
+
+
+
 safe_dep <- function(x1bar, x2bar, s1, s2, n, rho,
-                     B = 1e4, chunk = 5e3) {
+                     B = 1e4, chunk = 5e3,
+                     eps = .Machine$double.eps) {
+
   MSB0 <- (n / 2) * (x1bar - x2bar)^2
   MSW0 <- (s1^2 + s2^2) / 2
-  if (MSB0 <= MSW0)
-    return(list(pt = NA, var = NA, lo = NA, hi = NA,
-                kept = 0L, total = B))
-  z_raw <- lnM_core(MSB0 - MSW0, MSW0, n)
+
+  ## always continue – coerce Δ > 0 if needed
+  Delta0 <- max(MSB0 - MSW0, eps)
+  z_raw  <- lnM_core(Delta0, MSW0, n)
+
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- matrix(0, 4, 4)
-  Sig[1, 1] <- s1^2 / n;  Sig[2, 2] <- s2^2 / n
+  Sig[1, 1] <- s1^2 / n
+  Sig[2, 2] <- s2^2 / n
   Sig[1, 2] <- Sig[2, 1] <- rho * s1 * s2 / n
-  Sig[3, 3] <- 2 * s1^4 / (n - 1); Sig[4, 4] <- 2 * s2^4 / (n - 1)
+  Sig[3, 3] <- 2 * s1^4 / (n - 1)
+  Sig[4, 4] <- 2 * s2^4 / (n - 1)
   Sig[3, 4] <- Sig[4, 3] <- 2 * rho^2 * s1^2 * s2^2 / (n - 1)
-  cloud <- numeric(B); kept <- 0L; k <- 0L
+
+  cloud <- numeric(B)
+  kept  <- 0L
+  tried <- 0L
+  k     <- 0L
+
   while (k < B) {
-    d <- mvrnorm(chunk, mu, Sig)
+
+    d     <- mvrnorm(chunk, mu, Sig)
+    tried <- tried + nrow(d)
+
     ok <- d[, 3] > 0 & d[, 4] > 0
     if (!any(ok)) next
-    m1 <- d[ok, 1]; m2 <- d[ok, 2]
-    v1 <- d[ok, 3]; v2 <- d[ok, 4]
+
+    m1  <- d[ok, 1]; m2 <- d[ok, 2]
+    v1  <- d[ok, 3]; v2 <- d[ok, 4]
     MSB <- (n / 2) * (m1 - m2)^2
     MSW <- (v1 + v2) / 2
     use <- MSB > MSW
     if (!any(use)) next
-    kept <- kept + sum(use)
+
     vals <- lnM_core(MSB[use] - MSW[use], MSW[use], n)
     take <- min(length(vals), B - k)
-    cloud[(k + 1):(k + take)] <- vals[1:take]; k <- k + take
+
+    cloud[(k + 1L):(k + take)] <- vals[1:take]
+    k    <- k + take
+    kept <- kept + take
   }
-  cloud <- cloud[1:B]
-  m_boot <- mean(cloud); pt <- 2 * z_raw - m_boot; v_est <- var(cloud)
-  cen <- cloud - m_boot; qs <- quantile(cen, c(0.025, 0.975))
-  list(pt = pt, var = v_est,
-       lo = pt + qs[1], hi = pt + qs[2],
-       kept = kept, total = B)
+
+  m_boot <- mean(cloud)
+  pt     <- 2 * z_raw - m_boot
+  v_est  <- var(cloud)
+  cen    <- cloud - m_boot
+  qs     <- quantile(cen, c(0.025, 0.975))
+
+  list(pt    = pt,
+       var   = v_est,
+       lo    = pt + qs[1],
+       hi    = pt + qs[2],
+       kept  = kept,
+       tried = tried)
 }
 
 ## -------- 3. one replicate -------------------------------------------
@@ -170,7 +221,10 @@ one_rep <- function(mu1, mu2, sd1, sd2,
   c(delta_pt  = d["pt"],  delta_var = d["var"],
     safe_pt   = b$pt,     safe_var  = b$var,
     safe_lo   = b$lo,     safe_hi   = b$hi,
-    safe_kept = b$kept,   safe_total = b$total)
+    safe_kept = b$kept,   safe_tried = b$tried,   # <-- NEW NAME
+    delta_fail = as.integer(is.na(d["pt"])),
+    safe_fail  = as.integer(is.na(b$pt))
+    )
 }
 
 ## -------- 4. parameter grid ------------------------------------------
@@ -198,13 +252,13 @@ param_grid <- rbind(grid_ind, grid_dep)
 
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
-K_repl <- 1e4      # <-- dial back from 1e5 for demo / speed
+K_repl <- 1e5     # demo / speed
 B_boot <- 1e5
 
 outer_verbose <- TRUE
 inner_every   <- 100
 
-mcse_mean <- function(x) sqrt(var(x) / length(x))
+mcse_mean <- function(x) sqrt(var(x, na.rm = TRUE) / sum(!is.na(x)))
 mcse_prop <- function(x) sqrt(mean(x) * (1 - mean(x)) / length(x))
 
 runner <- function(i) {
@@ -215,11 +269,15 @@ runner <- function(i) {
   else
     lnM_true_dep(p$theta, p$n1, sd0)
   
-  M <- matrix(NA_real_, 8, K_repl,
+  M <- matrix(NA_real_, 10, K_repl,
               dimnames = list(
-                c("delta_pt", "delta_var", "safe_pt", "safe_var",
-                  "safe_lo", "safe_hi", "safe_kept", "safe_total"),
+                c("delta_pt","delta_var",
+                  "safe_pt","safe_var",
+                  "safe_lo","safe_hi",
+                  "safe_kept","safe_tried",  # <-- label changed
+                  "delta_fail","safe_fail"),
                 NULL))
+
   for (k in seq_len(K_repl)) {
     M[, k] <- if (p$design == "indep")
       one_rep(0, p$theta, sd0, sd0, n1 = p$n1, n2 = p$n2, B = B_boot)
@@ -234,41 +292,52 @@ runner <- function(i) {
   Mok <- M[, ok, drop = FALSE]
   
   tv_s <- var(Mok["safe_pt", ])
-  
+
+  ## coverage statistics need true value, so use Mok
   cover_d <- abs(Mok["delta_pt", ] - true_ln) <=
     1.96 * sqrt(Mok["delta_var", ])
   cover_s <- abs(Mok["safe_pt", ]  - true_ln) <=
     1.96 * sqrt(Mok["safe_var", ])
   
+  delta_fail_prop <- mean(M["delta_fail", ])
+  safe_fail_prop  <- mean(M["safe_fail",  ])
+  
+  boot_keep  <- sum(M["safe_kept", ])
+  boot_tried <- sum(M["safe_tried", ])          # <-- NEW
+  boot_accept_prop <- boot_keep / boot_tried
+
   out <- data.frame(
-    theta          = p$theta,
-    design         = p$design,
-    n1             = p$n1,
-    n2             = ifelse(p$design == "indep", p$n2, p$n1),
-    true_lnM       = true_ln,
-    delta_mean     = mean(Mok["delta_pt", ]),
-    safe_mean      = mean(Mok["safe_pt",  ]),
-    delta_bias     = mean(Mok["delta_pt", ]) - true_ln,
-    safe_bias      = mean(Mok["safe_pt",  ]) - true_ln,
-    mean_var_delta = mean(Mok["delta_var", ]),
-    mean_var_safe  = mean(Mok["safe_var",  ]),
-    relbias_delta  = 100 * (mean(Mok["delta_var", ]) / tv_s - 1),
-    relbias_safe   = 100 * (mean(Mok["safe_var",  ]) / tv_s - 1),
-    rmse_delta     = sqrt(mean((Mok["delta_pt", ] - true_ln)^2)),
-    rmse_safe      = sqrt(mean((Mok["safe_pt",  ] - true_ln)^2)),
+    theta      = p$theta,
+    design     = p$design,
+    n1         = p$n1,
+    n2         = ifelse(p$design == "indep", p$n2, p$n1),
+    true_lnM   = true_ln,
+    ## means over *all* replicates, NA-robust
+    delta_mean = mean(M["delta_pt", ], na.rm = TRUE),
+    safe_mean  = mean(M["safe_pt",  ], na.rm = TRUE),
+    delta_bias = mean(M["delta_pt", ], na.rm = TRUE) - true_ln,
+    safe_bias  = mean(M["safe_pt",  ], na.rm = TRUE) - true_ln,
+    mean_var_delta = mean(M["delta_var", ], na.rm = TRUE),
+    mean_var_safe  = mean(M["safe_var",  ],  na.rm = TRUE),
+    relbias_delta  = 100 * (mean(M["delta_var", ], na.rm = TRUE) / tv_s - 1),
+    relbias_safe   = 100 * (mean(M["safe_var",  ], na.rm = TRUE) / tv_s - 1),
+    rmse_delta     = sqrt(mean((M["delta_pt", ] - true_ln)^2, na.rm = TRUE)),
+    rmse_safe      = sqrt(mean((M["safe_pt",  ] - true_ln)^2, na.rm = TRUE)),
     cover_delta    = mean(cover_d),
     cover_safe     = mean(cover_s),
-    boot_keep      = sum(Mok["safe_kept", ]),
-    boot_total     = sum(Mok["safe_total", ]),
-    mcse_bias_delta   = mcse_mean(Mok["delta_pt", ] - true_ln),
-    mcse_bias_safe    = mcse_mean(Mok["safe_pt",  ] - true_ln),
-    mcse_varbar_delta = mcse_mean(Mok["delta_var", ]),
-    mcse_varbar_safe  = mcse_mean(Mok["safe_var", ]),
+    boot_keep      = boot_keep,
+    boot_tried     = boot_tried,               # <-- NEW
+    mcse_bias_delta   = mcse_mean(M["delta_pt", ] - true_ln),
+    mcse_bias_safe    = mcse_mean(M["safe_pt",  ] - true_ln),
+    mcse_varbar_delta = mcse_mean(M["delta_var", ]),
+    mcse_varbar_safe  = mcse_mean(M["safe_var", ]),
     mcse_cover_delta  = mcse_prop(cover_d),
-    mcse_cover_safe   = mcse_prop(cover_s)
+    mcse_cover_safe   = mcse_prop(cover_s),
+    delta_fail_prop   = delta_fail_prop,
+    safe_fail_prop    = safe_fail_prop,
+    boot_accept_prop  = boot_accept_prop       # <-- NEW
   )
   
-  ## attach raw replicate matrix so caller can persist it
   attr(out, "raw_M") <- M
   
   if (outer_verbose)
@@ -279,36 +348,30 @@ runner <- function(i) {
 }
 
 ## -------- 5a. PARALLEL outer loop ------------------------------------
-## use all cores except two (never less than one)
-n_cores_use <- max(1L, detectCores() - 92)
-
-pbop <- pbapply::pboptions(type = "txt")   # progress bar style
+n_cores_use <- max(1L, detectCores() - 200)
+pbop <- pbapply::pboptions(type = "txt")
 
 if (.Platform$OS.type == "windows") {
-  ## ---- Windows: PSOCK cluster ---------------------------------------
   cl <- makeCluster(n_cores_use)
   clusterExport(cl, ls(envir = .GlobalEnv), envir = .GlobalEnv)
   results_list <- pbapply::pblapply(
     seq_len(nrow(param_grid)), runner, cl = cl)
   stopCluster(cl)
 } else {
-  ## ---- Unix/macOS: forked workers -----------------------------------
   results_list <- pbapply::pblapply(
     seq_len(nrow(param_grid)), runner, cl = n_cores_use)
 }
 
-pbapply::pboptions(pbop)  # restore previous pbapply settings
+pbapply::pboptions(pbop)
 
 ## -------- 5c. COLLAPSE + SERIALISE -----------------------------------
 results <- do.call(rbind, results_list)
-
-## summary RDS
 summary_file <- sprintf("lnM_summary_%s.rds", Sys.Date())
 saveRDS(results, summary_file)
 message("Saved overall summary to: ", summary_file)
 
 ## (optional) save each raw replicate matrix
-save_raw <- TRUE     # flip to FALSE to skip heavy files
+save_raw <- TRUE
 if (save_raw) {
   dir.create("raw_runs", showWarnings = FALSE)
   for (i in seq_along(results_list)) {
@@ -322,7 +385,6 @@ if (save_raw) {
           " raw replicate files into raw_runs/")
 }
 
-## also CSV for spreadsheets
 write.csv(results,
           file = sprintf("lnM_summary_%s.csv", Sys.Date()),
           row.names = FALSE)
