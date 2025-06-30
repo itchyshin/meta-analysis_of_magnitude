@@ -82,32 +82,34 @@ safe_ind <- function(x1bar, x2bar, s1, s2, n1, n2,
   MSB0 <- h * (x1bar - x2bar)^2
   MSW0 <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
 
-  ## always continue – coerce Δ > 0 if needed
-  Delta0 <- max(MSB0 - MSW0, eps)
-  z_raw  <- lnM_core(Delta0, MSW0, n0)
+  ## Δ0 for bias-correction – force strictly positive for log
+  Delta0 <- MSB0 - MSW0
+  use_bc <- Delta0 > 0
+  if (!use_bc) Delta0 <- eps             # tiny positive surrogate
+  z_raw <- if (use_bc) lnM_core(Delta0, MSW0, n0) else NA_real_
 
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- diag(c(s1^2 / n1, s2^2 / n2,
                 2 * s1^4 / (n1 - 1), 2 * s2^4 / (n2 - 1)))
 
   cloud <- numeric(B)
-  kept  <- 0L           # accepted & *stored*
-  tried <- 0L           # total proposal draws
-  k     <- 0L           # pointer in the cloud
+  kept  <- 0L
+  tried <- 0L
+  k     <- 0L
 
   while (k < B) {
 
     d     <- mvrnorm(chunk, mu, Sig)
     tried <- tried + nrow(d)
 
-    ok <- d[, 3] > 0 & d[, 4] > 0          # variances must be positive
+    ok <- d[, 3] > 0 & d[, 4] > 0
     if (!any(ok)) next
 
     m1  <- d[ok, 1]; m2 <- d[ok, 2]
     v1  <- d[ok, 3]; v2 <- d[ok, 4]
     MSB <- h * (m1 - m2)^2
     MSW <- ((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2)
-    use <- MSB > MSW                       # admissible proposals
+    use <- MSB > MSW
     if (!any(use)) next
 
     vals <- lnM_core(MSB[use] - MSW[use], MSW[use], n0)
@@ -115,14 +117,13 @@ safe_ind <- function(x1bar, x2bar, s1, s2, n1, n2,
 
     cloud[(k + 1L):(k + take)] <- vals[1:take]
     k    <- k + take
-    kept <- kept + take                    # only what we *store*
+    kept <- kept + take
   }
 
   m_boot <- mean(cloud)
-  pt     <- 2 * z_raw - m_boot
+  pt     <- if (use_bc) 2 * z_raw - m_boot else m_boot
   v_est  <- var(cloud)
-  cen    <- cloud - m_boot
-  qs     <- quantile(cen, c(0.025, 0.975))
+  qs     <- quantile(cloud - m_boot, c(0.025, 0.975))
 
   list(pt    = pt,
        var   = v_est,
@@ -141,9 +142,10 @@ safe_dep <- function(x1bar, x2bar, s1, s2, n, rho,
   MSB0 <- (n / 2) * (x1bar - x2bar)^2
   MSW0 <- (s1^2 + s2^2) / 2
 
-  ## always continue – coerce Δ > 0 if needed
-  Delta0 <- max(MSB0 - MSW0, eps)
-  z_raw  <- lnM_core(Delta0, MSW0, n)
+  Delta0 <- MSB0 - MSW0
+  use_bc <- Delta0 > 0
+  if (!use_bc) Delta0 <- eps
+  z_raw <- if (use_bc) lnM_core(Delta0, MSW0, n) else NA_real_
 
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- matrix(0, 4, 4)
@@ -183,10 +185,9 @@ safe_dep <- function(x1bar, x2bar, s1, s2, n, rho,
   }
 
   m_boot <- mean(cloud)
-  pt     <- 2 * z_raw - m_boot
+  pt     <- if (use_bc) 2 * z_raw - m_boot else m_boot
   v_est  <- var(cloud)
-  cen    <- cloud - m_boot
-  qs     <- quantile(cen, c(0.025, 0.975))
+  qs     <- quantile(cloud - m_boot, c(0.025, 0.975))
 
   list(pt    = pt,
        var   = v_est,
