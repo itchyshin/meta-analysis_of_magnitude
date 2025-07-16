@@ -76,55 +76,55 @@ lnM_delta_dep <- function(x1, x2, s1, s2, n, rho) {
 safe_ind <- function(x1bar, x2bar, s1, s2, n1, n2,
                      B = 1e4, chunk = 5e3,
                      eps = .Machine$double.eps) {
-
+  
   h   <- n1 * n2 / (n1 + n2)
   n0  <- 2 * h
   MSB0 <- h * (x1bar - x2bar)^2
   MSW0 <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
-
+  
   ## Δ0 for bias-correction – force strictly positive for log
   Delta0 <- MSB0 - MSW0
   use_bc <- Delta0 > 0
   if (!use_bc) Delta0 <- eps             # tiny positive surrogate
   z_raw <- if (use_bc) lnM_core(Delta0, MSW0, n0) else NA_real_
-
+  
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- diag(c(s1^2 / n1, s2^2 / n2,
                 2 * s1^4 / (n1 - 1), 2 * s2^4 / (n2 - 1)))
-
+  
   cloud <- numeric(B)
   kept  <- 0L
   tried <- 0L
   k     <- 0L
-
+  
   while (k < B) {
-
+    
     d     <- mvrnorm(chunk, mu, Sig)
     tried <- tried + nrow(d)
-
+    
     ok <- d[, 3] > 0 & d[, 4] > 0
     if (!any(ok)) next
-
+    
     m1  <- d[ok, 1]; m2 <- d[ok, 2]
     v1  <- d[ok, 3]; v2 <- d[ok, 4]
     MSB <- h * (m1 - m2)^2
     MSW <- ((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2)
     use <- MSB > MSW
     if (!any(use)) next
-
+    
     vals <- lnM_core(MSB[use] - MSW[use], MSW[use], n0)
     take <- min(length(vals), B - k)
-
+    
     cloud[(k + 1L):(k + take)] <- vals[1:take]
     k    <- k + take
     kept <- kept + take
   }
-
+  
   m_boot <- mean(cloud)
   pt     <- if (use_bc) 2 * z_raw - m_boot else m_boot
   v_est  <- var(cloud)
   qs     <- quantile(cloud - m_boot, c(0.025, 0.975))
-
+  
   list(pt    = pt,
        var   = v_est,
        lo    = pt + qs[1],
@@ -138,15 +138,15 @@ safe_ind <- function(x1bar, x2bar, s1, s2, n1, n2,
 safe_dep <- function(x1bar, x2bar, s1, s2, n, rho,
                      B = 1e4, chunk = 5e3,
                      eps = .Machine$double.eps) {
-
+  
   MSB0 <- (n / 2) * (x1bar - x2bar)^2
   MSW0 <- (s1^2 + s2^2) / 2
-
+  
   Delta0 <- MSB0 - MSW0
   use_bc <- Delta0 > 0
   if (!use_bc) Delta0 <- eps
   z_raw <- if (use_bc) lnM_core(Delta0, MSW0, n) else NA_real_
-
+  
   mu  <- c(x1bar, x2bar, s1^2, s2^2)
   Sig <- matrix(0, 4, 4)
   Sig[1, 1] <- s1^2 / n
@@ -155,40 +155,40 @@ safe_dep <- function(x1bar, x2bar, s1, s2, n, rho,
   Sig[3, 3] <- 2 * s1^4 / (n - 1)
   Sig[4, 4] <- 2 * s2^4 / (n - 1)
   Sig[3, 4] <- Sig[4, 3] <- 2 * rho^2 * s1^2 * s2^2 / (n - 1)
-
+  
   cloud <- numeric(B)
   kept  <- 0L
   tried <- 0L
   k     <- 0L
-
+  
   while (k < B) {
-
+    
     d     <- mvrnorm(chunk, mu, Sig)
     tried <- tried + nrow(d)
-
+    
     ok <- d[, 3] > 0 & d[, 4] > 0
     if (!any(ok)) next
-
+    
     m1  <- d[ok, 1]; m2 <- d[ok, 2]
     v1  <- d[ok, 3]; v2 <- d[ok, 4]
     MSB <- (n / 2) * (m1 - m2)^2
     MSW <- (v1 + v2) / 2
     use <- MSB > MSW
     if (!any(use)) next
-
+    
     vals <- lnM_core(MSB[use] - MSW[use], MSW[use], n)
     take <- min(length(vals), B - k)
-
+    
     cloud[(k + 1L):(k + take)] <- vals[1:take]
     k    <- k + take
     kept <- kept + take
   }
-
+  
   m_boot <- mean(cloud)
   pt     <- if (use_bc) 2 * z_raw - m_boot else m_boot
   v_est  <- var(cloud)
   qs     <- quantile(cloud - m_boot, c(0.025, 0.975))
-
+  
   list(pt    = pt,
        var   = v_est,
        lo    = pt + qs[1],
@@ -225,7 +225,7 @@ one_rep <- function(mu1, mu2, sd1, sd2,
     safe_kept = b$kept,   safe_tried = b$tried,   # <-- NEW NAME
     delta_fail = as.integer(is.na(d["pt"])),
     safe_fail  = as.integer(is.na(b$pt))
-    )
+  )
 }
 
 ## -------- 4. parameter grid ------------------------------------------
@@ -278,7 +278,7 @@ runner <- function(i) {
                   "safe_kept","safe_tried",  # <-- label changed
                   "delta_fail","safe_fail"),
                 NULL))
-
+  
   for (k in seq_len(K_repl)) {
     M[, k] <- if (p$design == "indep")
       one_rep(0, p$theta, sd0, sd0, n1 = p$n1, n2 = p$n2, B = B_boot)
@@ -293,7 +293,7 @@ runner <- function(i) {
   Mok <- M[, ok, drop = FALSE]
   
   tv_s <- var(Mok["safe_pt", ])
-
+  
   ## coverage statistics need true value, so use Mok
   cover_d <- abs(Mok["delta_pt", ] - true_ln) <=
     1.96 * sqrt(Mok["delta_var", ])
@@ -306,7 +306,7 @@ runner <- function(i) {
   boot_keep  <- sum(M["safe_kept", ])
   boot_tried <- sum(M["safe_tried", ])          # <-- NEW
   boot_accept_prop <- boot_keep / boot_tried
-
+  
   out <- data.frame(
     theta      = p$theta,
     design     = p$design,
@@ -390,8 +390,6 @@ write.csv(results,
           file = sprintf("lnM_summary_%s.csv", Sys.Date()),
           row.names = FALSE)
 
-
-###############################################
 ## -------- 6. quick Bias plot example ---------------------------------
 #results <- readRDS(here("Rdata", "lnM_summary_2025-06-30.rds"))
 
