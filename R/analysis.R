@@ -31,6 +31,18 @@ dat <- escalc(measure = "SMDH",                     # bias-corrected Hedges g
               data = dat, append = TRUE,
               var.names = c("yi_g",   "vi_g"))
 
+dat <- escale(measure = "CVR",
+              m1i = mean1_r, sd1i = sd1_r, n1i = n1_r,
+              m2i = mean2_r, sd2i = sd2_r, n2i = n2_r,
+              data = dat, append = TRUE,
+              var.names = c("yi_cvr", "vi_cvr"))
+
+dat <- escale(measure = "VR",
+              m1i = mean1_r, sd1i = sd1_r, n1i = n1_r,
+              m2i = mean2_r, sd2i = sd2_r, n2i = n2_r,
+              data = dat, append = TRUE,
+              var.names = c("yi_vr",  "vi_vr"))
+
 ## ── folded-normal helper ──────────────────────────────────────────────────
 folded_norm <- function(mu, var) {
   sigma  <- sqrt(var)
@@ -180,7 +192,7 @@ dat$ln_year <- log(dat$years)
 dat$urban_disturbance[is.na(dat$urban_disturbance) == TRUE] <- "Natural"
 
 # ordering factor Natural as reference level
-dat$urban_disturbance <- factor(dat$urban_disturbance, 
+dat$disturbance <- factor(dat$urban_disturbance, 
                                 levels = c("Natural", 
                                            "Biotic", 
                                            "Habitat Mod",
@@ -189,7 +201,7 @@ dat$urban_disturbance <- factor(dat$urban_disturbance,
                                            "Social"),
                                 ordered = TRUE)
 # ordering In situe natural variation as reference and merge 2 self introduction type stuff
-dat$driver <- factor(dat$driver, 
+dat$driver2 <- factor(dat$driver, 
                                 levels = c("In situ natural variation", 
                                            "Climate change",
                                            "Harvest",
@@ -207,8 +219,8 @@ dat$driver <- factor(dat$driver,
                                            "Competition",
                                            "Pollution",
                                            "Expantion",
-                                           "Self_expanation",
-                                           "Self_expanation" 
+                                           "Expantion",
+                                           "Expantion" 
                                 ),
                                 ordered = TRUE)
 # exclude p084 (ref_ID)
@@ -240,6 +252,8 @@ mr_lnM1 <- rma.mv(yi = yi_lnM_safe,
                                         ~ 1 | ref_ID,
                                         ~ 1 | sys_ID), 
                           sparse = TRUE,
+                          test = "t",
+                          method = "REML", 
                           data = dat)
 
 summary(mr_lnM1)
@@ -249,32 +263,54 @@ bubble_plot(mr_lnM1, mod = "c_year", xlab = "centered_year", group = "sys_ID")
 
 mr_lnM2 <- rma.mv(yi = yi_lnM_safe, 
                   V = vi_lnM_safe, 
-                  mods = ~ -1 + urban_disturbance + ln_year,
+                  mods = ~ disturbance*ln_year,
                   random = list(~ 1 | es_ID,
                                 ~ 1 | ref_ID,
                                 ~ 1 | sys_ID), 
                   sparse = TRUE,
+                  test = "t",
+                  method = "REML", 
                   data = dat)
 
 summary(mr_lnM2)
 
-orchard_plot(mr_lnM2,  mod = "urban_disturbance", xlab = "lnM",  group = "sys_ID")
+orchard_plot(mr_lnM2,  mod = "disturbance", xlab = "lnM",  group = "sys_ID")
 bubble_plot(mr_lnM2, mod = "ln_year", xlab = "centered_year", group = "sys_ID")
+
+
 
 mr_lnM3 <- rma.mv(yi = yi_lnM_safe, 
                   V = vi_lnM_safe, 
-                  mods = ~ -1 + driver + ln_year,
+                  mods = ~ driver2*ln_year,
                   random = list(~ 1 | es_ID,
                                 ~ 1 | ref_ID,
                                 ~ 1 | sys_ID), 
+                  
                   sparse = TRUE,
+                  test = "t",
+                  method = "REML", 
                   data = dat)
 
 summary(mr_lnM3)
 
-orchard_plot(mr_lnM3,  mod = "driver", xlab = "lnM",  group = "sys_ID")
-bubble_plot(mr_lnM3, mod = "ln_year", xlab = "centered_year", group = "sys_ID")
+orchard_plot(mr_lnM3,  mod = "driver2", xlab = "lnM",  group = "sys_ID")
+bubble_plot(mr_lnM3, mod = "ln_year", xlab = "centered_year", group = "sys_ID", by = "driver2")
 
+
+
+mr_lnM4<- rma.mv(yi = yi_lnM_safe, 
+                  V = vi_lnM_safe, 
+                  mods = ~ driver2 + ln_year,
+                  random = list(~driver2 | es_ID,
+                                ~ 1 | ref_ID,
+                                ~ 1 | sys_ID), 
+                  struct = "DIAG",
+                  sparse = TRUE,
+                  test = "t",
+                  method = "REML", 
+                  data = dat[is.na(dat$driver2) == FALSE, ])
+
+summary(mr_lnM4)
 
 # Meta-analysis of yi_rom_abs
 
@@ -335,3 +371,42 @@ ma_SMD_gen <- rma.mv(yi = yi_g_abs,
                       data = dat)
 
 summary(ma_SMD_gen)
+
+
+#####
+# Bayesian analysis
+
+library(brms)
+library(cmdstanr)
+
+
+library(brms)
+library(cmdstanr)  # makes sure CmdStan is available
+
+# tell brms to use cmdstanr (required for reduce_sum / threading)
+options(brms.backend = "cmdstanr")
+
+# how many chains will run **in parallel**
+options(mc.cores = 2)   
+
+
+bf_lnM <- bf(
+  yi_lnM_safe | se(sqrt(vi_lnM_safe), sigma = TRUE) ~
+    driver2 + ln_year +
+    (1 | es_ID) + (1 | ref_ID) + (1 | sys_ID),
+  sigma ~ driver2 
+)
+
+fit_lnM_threaded <- brm(
+  formula  = bf_lnM,
+  data     = dat_brms,
+  family   = gaussian(),
+  prior    = priors_lnM,
+  backend  = "cmdstanr",
+  
+  ## --- parallel settings -----------------------------------------------
+  chains   = 2,                  # 2 chains run *between*-chain-parallel
+  threads  = threading(8),       # 4 OpenMP threads *within* each chain
+  iter     = 4000, warmup = 1000,
+  control  = list(adapt_delta = 0.95)
+)
