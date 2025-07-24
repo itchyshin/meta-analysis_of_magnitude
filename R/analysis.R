@@ -31,13 +31,13 @@ dat <- escalc(measure = "SMDH",                     # bias-corrected Hedges g
               data = dat, append = TRUE,
               var.names = c("yi_g",   "vi_g"))
 
-dat <- escale(measure = "CVR",
+dat <- escalc(measure = "CVR",
               m1i = mean1_r, sd1i = sd1_r, n1i = n1_r,
               m2i = mean2_r, sd2i = sd2_r, n2i = n2_r,
               data = dat, append = TRUE,
               var.names = c("yi_cvr", "vi_cvr"))
 
-dat <- escale(measure = "VR",
+dat <- escalc(measure = "VR",
               m1i = mean1_r, sd1i = sd1_r, n1i = n1_r,
               m2i = mean2_r, sd2i = sd2_r, n2i = n2_r,
               data = dat, append = TRUE,
@@ -311,6 +311,43 @@ mr_lnM4<- rma.mv(yi = yi_lnM_safe,
                   data = dat[is.na(dat$driver2) == FALSE, ])
 
 summary(mr_lnM4)
+orchard_plot(mr_lnM4,  mod = "driver2", xlab = "lnM",  group = "sys_ID")
+########
+# lnCVR
+#########
+# 
+# mr_lnCVR3 <- rma.mv(yi = yi_cvr, 
+#                      V = vi_cvr, 
+#                      mods = ~ driver2 + ln_year,
+#                      random = list(~ 1 | es_ID,
+#                                    ~ 1 | ref_ID,
+#                                    ~ 1 | sys_ID), 
+#                      sparse = TRUE,
+#                      data = dat)
+# summary(mr_lnCVR3)
+# 
+# orchard_plot(mr_lnCVR3,  mod = "driver2", xlab = "lnCVR",  group = "sys_ID")
+# bubble_plot(mr_lnCVR3, mod = "ln_year", xlab = "centered_year", group = "sys_ID", by = "driver2")
+# 
+# #####
+# # lnVR
+# ######
+# 
+# mr_lnVR3 <- rma.mv(yi = yi_vr, 
+#                      V = vi_vr, 
+#                      mods = ~ driver2 + ln_year,
+#                      random = list(~ 1 | es_ID,
+#                                    ~ 1 | ref_ID,
+#                                    ~ 1 | sys_ID), 
+#                      sparse = TRUE,
+#                      data = dat)
+# 
+# summary(mr_lnVR3)
+# 
+# orchard_plot(mr_lnVR3,  mod = "driver2", xlab = "lnVR",  group = "sys_ID")
+# bubble_plot(mr_lnVR3, mod = "ln_year", xlab = "centered_year", group = "sys_ID", by = "driver2")
+# 
+# 
 
 # Meta-analysis of yi_rom_abs
 
@@ -377,10 +414,6 @@ summary(ma_SMD_gen)
 # Bayesian analysis
 
 library(brms)
-library(cmdstanr)
-
-
-library(brms)
 library(cmdstanr)  # makes sure CmdStan is available
 
 # tell brms to use cmdstanr (required for reduce_sum / threading)
@@ -389,24 +422,43 @@ options(brms.backend = "cmdstanr")
 # how many chains will run **in parallel**
 options(mc.cores = 2)   
 
+vcv <- diag(dat$vi_lnM_safe)
+rownames(vcv) <- dat$es_ID
+colnames(vcv) <- dat$es_ID
 
 bf_lnM <- bf(
-  yi_lnM_safe | se(sqrt(vi_lnM_safe), sigma = TRUE) ~
-    driver2 + ln_year +
-    (1 | es_ID) + (1 | ref_ID) + (1 | sys_ID),
-  sigma ~ driver2 
+  yi_lnM_safe ~ 1 + driver2 + ln_year +
+                (1|gr(es_ID, cov = vcv)) + (1 | ref_ID) + (1 | sys_ID),
+                sigma ~ 1 + driver2 
 )
 
-fit_lnM_threaded <- brm(
+
+# prior
+
+prior_lnM <- default_prior(bf_lnM, 
+                           data=dat, 
+                           data2=list(vcv=vcv),
+                           family=gaussian())
+
+prior_lnM$prior[11] = "constant(1)"
+
+
+mod_lnM <- brm(
   formula  = bf_lnM,
-  data     = dat_brms,
+  data     = dat,
+  data2.   =list(vcv=vcv),
   family   = gaussian(),
-  prior    = priors_lnM,
   backend  = "cmdstanr",
-  
+  prior    = prior_lnM,
   ## --- parallel settings -----------------------------------------------
   chains   = 2,                  # 2 chains run *between*-chain-parallel
+  core     = 2,
   threads  = threading(8),       # 4 OpenMP threads *within* each chain
-  iter     = 4000, warmup = 1000,
-  control  = list(adapt_delta = 0.95)
+  iter     = 10000, 
+  warmup   = 5000,
+  control  = list(adapt_delta = 0.95,
+                 max_treedepth = 15)
 )
+
+
+summary(mod_lnM)
