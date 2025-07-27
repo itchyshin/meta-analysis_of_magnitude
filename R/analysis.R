@@ -2,7 +2,6 @@
 library(tidyverse)
 library(metafor)        # escalc()
 library(here)
-library(tidyverse)
 library(orchaRd)
 
 source(here("R", "lnM_SAFE7.R"))   # defines lnM_delta1_indep()   &   safe_lnM_indep()
@@ -462,3 +461,7 @@ mod_lnM <- brm(
 
 
 summary(mod_lnM)
+
+# save the model as rds file
+
+saveRDS(mod_lnM, here("data", "mod_lnM.rds"))
