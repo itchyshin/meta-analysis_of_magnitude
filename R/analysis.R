@@ -30,6 +30,7 @@ dat <- escalc(measure = "SMDH",                     # bias-corrected Hedges g
               data = dat, append = TRUE,
               var.names = c("yi_g",   "vi_g"))
 
+# these are not that meaningful
 dat <- escalc(measure = "CVR",
               m1i = mean1_r, sd1i = sd1_r, n1i = n1_r,
               m2i = mean2_r, sd2i = sd2_r, n2i = n2_r,
