@@ -36,7 +36,7 @@ get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
 # lnM - SAFE
 ## ── 5.  SAFE ln M  (parametric bootstrap)  ─────────────────────────────────
 ##        B = 10 000 resamples is a good default.
-get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, B = 1e4) {
+get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, B = 1e3) {
   out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2, B = B)
   tibble(
     yi_lnM_safe = out$point,
