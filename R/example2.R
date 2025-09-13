@@ -64,3 +64,6 @@ get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, B = 1e3) {
 #### 2.  Load the data ---------------------------------------------------------
 dat0 <- read.csv(here("data", "DataInverts.csv"), na.strings = c("", "NA"))
 
+
+
+
