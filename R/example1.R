@@ -175,7 +175,12 @@ mod_lnM <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
   mods = ~ magnitude + duration + Recovery,
-  random = rand_list,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | Species,
+    ~ 1 | Species.no.phylo,
+    ~ 1 | ES.ID
+  ),
  # R = list(Species = corMat.env),
  # Rscale = 0,
   data   = dat_cond,
@@ -194,14 +199,3 @@ library(patchwork)
 
 (p1 + p2 + p3) / (p4 + p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
 
-
-###########
-# Example 2
-###########
-
-
-
-
-###########
-# Example 3
-###########

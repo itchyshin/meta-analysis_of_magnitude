@@ -12,6 +12,7 @@ library(tidyverse)   # dplyr, purrr, ggplot2, …
 library(data.table)  # fast fread()
 library(metafor)     # rma()
 library(here)        # here()
+library(orchaRd)    # bubble_plot()
 theme_set(theme_bw())
 
 source(here("R", "lnM_SAFE8.R"))   # defines lnM_delta1_indep()   &   safe_lnM_indep()
@@ -139,7 +140,9 @@ print(summary_stats)
 res_rom_abs     <- rma.mv(yi = yi_rom_abs, V = vi_rom_abs, 
                       random = ~ 1 | PaperAuthor, 
                       data = dat,
-                      spares = TRUE)
+                      spares = TRUE,
+                      control = list(optimizer = "Nelder-Mead"))
+                      
 
 summary(res_rom_abs)
 
@@ -148,7 +151,8 @@ res_rom_abs1     <- rma.mv(yi = yi_rom_abs, V = vi_rom_abs,
                        mod = ~ Habitat,
                        random = ~ 1 | PaperAuthor, 
                        data = dat,
-                       spares = TRUE)
+                       spares = TRUE,
+                       control = list(optimizer = "Nelder-Mead"))
 
 summary(res_rom_abs1)
 
@@ -159,7 +163,8 @@ res_rom_abs2     <- rma.mv(yi = yi_rom_abs, V = vi_rom_abs,
                        mod = ~ PaperYear,
                        random = ~ 1 | PaperAuthor, 
                        data = dat,
-                       spares = TRUE)
+                       spares = TRUE,
+                       control = list(optimizer = "Nelder-Mead"))
 
 summary(res_rom_abs2)
 
@@ -169,7 +174,8 @@ res_rom_abs3     <- rma.mv(yi = yi_rom_abs, V = vi_rom_abs,
                        mod = ~ CO2Treatment - 1,
                        random = ~ 1 | PaperAuthor, 
                        data = dat,
-                       spares = TRUE)
+                       spares = TRUE,
+                       control = list(optimizer = "Nelder-Mead"))
 
 
 summary(res_rom_abs3)
@@ -193,6 +199,8 @@ res_lnM_safe1     <- rma.mv(yi = yi_lnM_safe,
 
 summary(res_lnM_safe1)
 
+orchard_plot(res_lnM_safe1, mod = "Habitat", xlab = "lnM (SAFE)", group = "PaperAuthor")
+
 # meta-regression - PaperYear
 
 res_lnM_safe2     <- rma.mv(yi = yi_lnM_safe, 
@@ -203,6 +211,9 @@ res_lnM_safe2     <- rma.mv(yi = yi_lnM_safe,
 
 summary(res_lnM_safe2)
 
+
+bubble_plot(res_lnres_lnM_safe2M_safe5, mod = "PaperYear", ylab = "lnM (SAFE)", group = "PaperAuthor")
+
 # meta-regression - CO2Treatment
 
 res_lnM_safe3     <- rma.mv(yi = yi_lnM_safe, 
@@ -211,7 +222,9 @@ res_lnM_safe3     <- rma.mv(yi = yi_lnM_safe,
                             random = ~ 1 | PaperAuthor, data = dat,
                             sparse= TRUE)
 
-summary(res_lnM_safe3)
+summary(res_lnM_safe3) # something is wrong with this one
+
+orchard_plot(res_lnM_safe3, mod = "CO2Treatment", xlab = "lnM (SAFE)", group = "PaperAuthor")
 
 
 # meta-regression - sqrt(vi_lnM_safe) - to check for publication bias
@@ -241,6 +254,7 @@ summary(res_lnM_safe5)
 
 bubble_plot(res_lnM_safe5, mod = "sqrt_inverse_n", ylab = "lnM (SAFE)", group = "PaperAuthor")
 
+
 # meta-regression - log(n1 + n2)
 dat$log_n <- log(dat$n1i + dat$n2i)
 
@@ -253,6 +267,7 @@ res_lnM_safe6     <- rma.mv(yi = yi_lnM_safe,
 summary(res_lnM_safe6)
 
 bubble_plot(res_lnM_safe6, mod = "log_n", ylab = "lnM (SAFE)", group = "PaperAuthor")
+
 
 
 # visualization
