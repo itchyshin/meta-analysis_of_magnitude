@@ -266,6 +266,10 @@ dat <- dat %>% mutate(
     get_lnM_safe)
 ) %>% unnest(lnM_safe)
 
+# adding safe2
+
+dat$yi_lnM_safe2 <- dat$yi_lnM_safe - sqrt(2)
+
 
 #data.phylo.2<-na.omit(data.phylo)
 
@@ -368,6 +372,10 @@ mod1 <-rma.mv	(yi=abs(yi),
 summary(mod1)
 
 orchard_plot(mod1, mod = "taxon.for.plot", xlab = "abs(SMDH)", group = "study")
+
+
+# safe modified
+
 
 # use lnM safe
 
