@@ -15,6 +15,7 @@ library("corpcor")  # version 1.6.9
 library("ggplot2")  # version 3.0.0
 library("orchaRd")
 library("here")
+library("tidyverse")   # dplyr, purrr, ggplot2, …
 theme_set(theme_bw())
 
 
@@ -268,7 +269,7 @@ dat <- dat %>% mutate(
 
 # adding safe2
 
-dat$yi_lnM_safe2 <- dat$yi_lnM_safe - sqrt(2)
+dat$yi_lnM_safe2 <- dat$yi_lnM_safe + log(sqrt(2))
 
 
 #data.phylo.2<-na.omit(data.phylo)
@@ -375,6 +376,20 @@ orchard_plot(mod1, mod = "taxon.for.plot", xlab = "abs(SMDH)", group = "study")
 
 
 # safe modified
+mod1_lnM_safe2 <-rma.mv	(yi=yi_lnM_safe2, 
+                        V=VCV.lnM_safe, 
+                        mods= ~ taxon.for.plot  - 1,
+                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                        #R = list(species_ott = corr_matrix), 
+                        #data=data.phylo.2, 
+                        data = dat,
+                        method="REML",
+                        spares = TRUE)
+
+summary(mod1_lnM_safe2)
+i2_ml(mod1_lnM_safe2)
+
+orchard_plot(mod1_lnM_safe2, mod = "taxon.for.plot", xlab = "lnM SAFE", group = "study")
 
 
 # use lnM safe

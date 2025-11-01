@@ -188,6 +188,30 @@ mod_lnM <- rma.mv(
 
 summary(mod_lnM)
 
+# adjustment
+
+
+## 3c. lnM
+
+dat_cond$yi_lnM_safe2 <- dat_cond$yi_lnM_safe +log(sqrt(2))
+
+mod_lnM <- rma.mv(
+  yi   = yi_lnM_safe2,
+  V    = vi_lnM_safe,
+  mods = ~ magnitude + duration + Recovery,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | Species,
+    ~ 1 | Species.no.phylo,
+    ~ 1 | ES.ID
+  ),
+  # R = list(Species = corMat.env),
+  # Rscale = 0,
+  data   = dat_cond,
+  method = "REML")
+
+summary(mod_lnM)
+
 # bubble plot
 p4 <- bubble_plot(mod_lnM, mod = "magnitude", ylab = "lnM", group = "Study")
 p5 <- bubble_plot(mod_lnM, mod = "duration", ylab = "lnM", group = "Study")

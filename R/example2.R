@@ -183,7 +183,9 @@ summary(res_rom_abs3)
 
 # use lmM - the same models but use safe
 
-res_lnM_safe     <- rma.mv(yi = yi_lnM_safe, 
+dat$yi_lnM_safe2 <- as.numeric(dat$yi_lnM_safe + log(sqrt(2))) 
+
+res_lnM_safe <- rma.mv(yi = yi_lnM_safe2, 
                            V = vi_lnM_safe, 
                            random = ~ 1 | PaperAuthor, 
                            data = dat,
@@ -191,7 +193,10 @@ res_lnM_safe     <- rma.mv(yi = yi_lnM_safe,
 
 summary(res_lnM_safe)
 
-res_lnM_safe1     <- rma.mv(yi = yi_lnM_safe, 
+orchard_plot(res_lnM_safe
+             ,  xlab = "lnM (SAFE)", group = "PaperAuthor")
+
+res_lnM_safe1     <- rma.mv(yi = yi_lnM_safe2, 
                             V = vi_lnM_safe, 
                             mod = ~  Habitat - 1,
                             random = ~ 1 | PaperAuthor, data = dat,
