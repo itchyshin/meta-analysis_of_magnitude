@@ -328,8 +328,7 @@ mod0 <-rma.mv	(yi=abs(yi),
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
-                       method="REML",
-                       spares = TRUE)
+                       method="REML")
 
 summary(mod0)
 
@@ -350,8 +349,7 @@ mod0_lnM_safe <-rma.mv	(yi=yi_lnM_safe,
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
-                       method="REML",
-                       spares = TRUE)
+                       method="REML")
 
 summary(mod0_lnM_safe)
 
@@ -367,8 +365,7 @@ mod1 <-rma.mv	(yi=abs(yi),
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
-                       method="REML",
-                       spares = TRUE)
+                       method="REML")
 
 summary(mod1)
 
@@ -383,8 +380,7 @@ mod1_lnM_safe2 <-rma.mv	(yi=yi_lnM_safe2,
                         #R = list(species_ott = corr_matrix), 
                         #data=data.phylo.2, 
                         data = dat,
-                        method="REML",
-                        spares = TRUE)
+                        method="REML")
 
 summary(mod1_lnM_safe2)
 i2_ml(mod1_lnM_safe2)
@@ -401,8 +397,7 @@ mod1_lnM_safe <-rma.mv	(yi=yi_lnM_safe,
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
-                       method="REML",
-                       spares = TRUE)
+                       method="REML")
 
 summary(mod1_lnM_safe)
 i2_ml(mod1_lnM_safe)
@@ -410,4 +405,42 @@ i2_ml(mod1_lnM_safe)
 orchard_plot(mod1_lnM_safe, mod = "taxon.for.plot", xlab = "lnM SAFE", group = "study")
 
 
+# we should do egger regression with sample size or precision as moderator to test for publication bias
+# using SAFE and n0 = n1*n2/(n1+n2)
 
+dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1) / (dat$sample.size.control + dat$sample.size.noise.1)
+dat$nSE <- 1 / sqrt(dat$n0)
+dat$nV <- 1 / dat$n0
+
+VCV.lnM_safe <- vcalc(data = dat, 
+                     cluster = dat$study, 
+                     obs = dat$case.nr,
+                     rho = 0.5, 
+                     vi = dat$vi_lnM_safe)
+
+mod_egger <-rma.mv	(yi=yi_lnM_safe, 
+                        V=VCV.lnM_safe, 
+                        mods= ~ nSE,
+                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                        #R = list(species_ott = corr_matrix), 
+                        #data=data.phylo.2, 
+                        data = dat,
+                        method="REML")
+
+summary(mod_egger)
+
+bubble_plot(mod_egger, mod = "nSE", xlab = "1/sqrt(n0)", ylab = "lnM SAFE", group = "study")
+
+# use nV
+mod_egger2 <-rma.mv	(yi=yi_lnM_safe, 
+                       V=VCV.lnM_safe, 
+                       mods= ~ nV,
+                       random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                       #R = list(species_ott = corr_matrix), 
+                       #data=data.phylo.2, 
+                       data = dat,
+                       method="REML")
+
+summary(mod_egger2)
+
+bubble_plot(mod_egger2, mod = "nV", xlab = "1/n0", ylab = "lnM SAFE", group = "study")
