@@ -16,6 +16,8 @@ library("ggplot2")  # version 3.0.0
 library("orchaRd")
 library("here")
 library("tidyverse")   # dplyr, purrr, ggplot2, …
+#library(emmeans)
+library(multcomp)
 theme_set(theme_bw())
 
 
@@ -35,7 +37,6 @@ get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, B = 1e3) {
 }
 
 # load data
-
 data<-read.csv(here("data", "kunc_2019.csv"), na.strings=c("","NA"))
 data<-as.data.frame(data)
 data.2<-data[which(data$species.latin!="NA"),]                ### exclude cases where no species were provided
@@ -185,6 +186,8 @@ data.10$species_ott[data.10$species.latin=="Myotis.myotis"]<-"Myotis_myotis_ott9
 data.10$species_ott[data.10$species.latin=="Rattus.norvegicus"]<-"Rattus_norvegicus_ott271555"
 data.10$species_ott[data.10$species.latin=="Megaptera.novaeangliae"]<-"Megaptera_novaeangliae_ott226198"
 
+# functions
+
 
 
 #############################################################################################
@@ -309,22 +312,23 @@ dat$yi_lnM_safe2 <- dat$yi_lnM_safe + log(sqrt(2))
 dat<-dat[which(!is.na(dat$vi)),]
 
 
-VCV <- vcalc(data = dat, 
-                     cluster = dat$study, 
-                     obs = dat$case.nr,
-                     rho = 0.5, 
-                     vi = dat$vi)
+#VCV <- vcalc(data = dat, 
+#                     cluster = dat$study, 
+#                     obs = dat$case.nr,
+#                     rho = 0.5, 
+#                     vi = dat$vi)
 
 
-##################### Fit model with taxa as moderator, and study, phylogeny and case number as random variable ###########################################
+##################### Fit model with taxa as moderator, and study, phylogeny and case number as random variable #################################
 
-
-###########################################
+# vi is probably wrong and get correct one
 
 mod0 <-rma.mv	(yi=abs(yi), 
-                       V=VCV, 
+                       V=vi, 
                        #mods= as.numeric(taxon.for.plot),
-                       random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                       random = list(~1 | study, 
+                                     #~ 1 | species.latin, 
+                                     ~1 | case.nr), 
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
@@ -336,16 +340,18 @@ orchard_plot(mod0,  xlab = "abs(SMDH)", group = "study")
 
 # run the same model using yi_lnM_safe and vi_lnM_safe - may need to create VCV.lnM_safe first
 
-VCV.lnM_safe <- vcalc(data = dat, 
-                     cluster = dat$study, 
-                     obs = dat$case.nr,
-                     rho = 0.5, 
-                     vi = dat$vi_lnM_safe)
+#VCV.lnM_safe <- vcalc(data = dat, 
+#                     cluster = dat$study, 
+#                     obs = dat$case.nr,
+#                     rho = 0.5, 
+#                     vi = dat$vi_lnM_safe)
 
 mod0_lnM_safe <-rma.mv	(yi=yi_lnM_safe, 
-                       V=VCV.lnM_safe, 
+                       V=vi_lnM_safe, 
                        #mods= as.numeric(taxon.for.plot),
-                       random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                       random = list(~1 | study, 
+                                   #  ~ 1 | species.latin, 
+                                     ~1 | case.nr), 
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
@@ -356,12 +362,17 @@ summary(mod0_lnM_safe)
 # evidence aganist - they are not different or more within group variation is higher
 orchard_plot(mod0_lnM_safe,  xlab = "abs(lnM SAFE)", group = "study")
 
+# let's use use subset - exluding Reptilia and Mollusca due to low sample size
+dat<-dat[which(dat$taxon.for.plot!="reptilia" & dat$taxon.for.plot!="mollusca" & dat$taxon.for.plot!="arthropoda"),]
+
 # do meta-regression with taxon.for.plot
 
 mod1 <-rma.mv	(yi=abs(yi), 
-                       V=VCV, 
-                       mods= ~ taxon.for.plot,
-                       random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                       V=vi, 
+                       mods= ~ taxon.for.plot - 1,
+                       random = list(~1 | study, 
+                                     #~ 1 | species.latin, 
+                                     ~1 | case.nr), 
                        #R = list(species_ott = corr_matrix), 
                        #data=data.phylo.2, 
                        data = dat,
@@ -372,26 +383,39 @@ summary(mod1)
 orchard_plot(mod1, mod = "taxon.for.plot", xlab = "abs(SMDH)", group = "study")
 
 
+#
+
+summary(glht(mod1, linfct=cbind(contrMat(rep(1,5), type="Tukey"))), test=adjusted("none"))
+
+
 # safe modified
 mod1_lnM_safe2 <-rma.mv	(yi=yi_lnM_safe2, 
-                        V=VCV.lnM_safe, 
+                        V=vi_lnM_safe, 
                         mods= ~ taxon.for.plot  - 1,
-                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                        random = list(~1 | study, 
+                                      #~ 1 | species.latin, 
+                                      ~1 | case.nr), 
                         #R = list(species_ott = corr_matrix), 
                         #data=data.phylo.2, 
                         data = dat,
                         method="REML")
+
+# can you do multiple comparison of taxon.for.plot here? - use 
+
+
 
 summary(mod1_lnM_safe2)
 i2_ml(mod1_lnM_safe2)
 
 orchard_plot(mod1_lnM_safe2, mod = "taxon.for.plot", xlab = "lnM SAFE", group = "study")
 
+summary(glht(mod1, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
+summary(glht(mod1_lnM_safe2, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
 # use lnM safe
 
 mod1_lnM_safe <-rma.mv	(yi=yi_lnM_safe, 
-                       V=VCV.lnM_safe, 
+                       V=vi_lnM_safe, 
                        mods= ~ taxon.for.plot  - 1,
                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
                        #R = list(species_ott = corr_matrix), 
@@ -412,16 +436,18 @@ dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1) / (dat$sample.size
 dat$nSE <- 1 / sqrt(dat$n0)
 dat$nV <- 1 / dat$n0
 
-VCV.lnM_safe <- vcalc(data = dat, 
-                     cluster = dat$study, 
-                     obs = dat$case.nr,
-                     rho = 0.5, 
-                     vi = dat$vi_lnM_safe)
+#CV.lnM_safe <- vcalc(data = dat, 
+#                     cluster = dat$study, 
+#                     obs = dat$case.nr,
+#                     rho = 0.5, 
+#                     vi = dat$vi_lnM_safe)
 
 mod_egger <-rma.mv	(yi=yi_lnM_safe, 
-                        V=VCV.lnM_safe, 
+                        V=vi_lnM_safe, 
                         mods= ~ nSE,
-                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
+                        random = list(~1 | study, 
+                                     # ~ 1 | species.latin, 
+                                      ~1 | case.nr), 
                         #R = list(species_ott = corr_matrix), 
                         #data=data.phylo.2, 
                         data = dat,
@@ -431,13 +457,28 @@ summary(mod_egger)
 
 bubble_plot(mod_egger, mod = "nSE", xlab = "1/sqrt(n0)", ylab = "lnM SAFE", group = "study")
 
+# using abs(yi)
+mod_egger_abs <-rma.mv	(yi=abs(yi), 
+                     V=vi, 
+                     mods= ~ nSE,
+                     random = list(~1 | study, 
+                                   # ~ 1 | species.latin, 
+                                   ~1 | case.nr), 
+                     #R = list(species_ott = corr_matrix), 
+                     #data=data.phylo.2, 
+                     data = dat,
+                     method="REML")
+
+summary(mod_egger_abs)
+bubble_plot(mod_egger_abs, mod = "nSE", xlab = "1/sqrt(n0)", ylab = "abs(SMDH)", group = "study")
+
 # use nV
 mod_egger2 <-rma.mv	(yi=yi_lnM_safe, 
                        V=VCV.lnM_safe, 
                        mods= ~ nV,
                        random = list(~1 | study, ~ 1 | species.latin, ~1 | case.nr), 
-                       #R = list(species_ott = corr_matrix), 
-                       #data=data.phylo.2, 
+                       R = list(species_ott = corr_matrix), 
+                       data=data.phylo.2, 
                        data = dat,
                        method="REML")
 

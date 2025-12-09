@@ -7,8 +7,6 @@ library(orchaRd)
 source(here("R", "lnM_SAFE8.R"))   # defines lnM_delta1_indep()   &   safe_lnM_indep()
 
 # function for folded normal
-
-
 folded_norm <- function(mu, var) {
   sigma  <- sqrt(var)
   ## avoid division-by-zero warnings
@@ -127,7 +125,26 @@ summary_stats <- list(
 print(summary_stats)
 
   
-## 3a. |d|
+# # meta-analysis
+# 
+# ma_abs <- rma.mvrma.mv(
+#   yi   = yi_g=d_abs, 
+#   V    = vi_g_abs,
+#   mods = ~ magnitude + duration + Recovery,
+#   random =  list(
+#     ~ 1 | Study,
+#     ~ 1 | Species,
+#     ~ 1 | Species.no.phylo,
+#     ~ 1 | ES.ID
+#   ),
+#   #R = list(Species = corMat.env),
+#   #Rscale = 0,
+#   data   = dat_cond,
+#   method = "REML")
+# 
+# 
+# 
+# ## 3a. |d|
 
 # remove . and replace with " " space 
 
@@ -136,6 +153,8 @@ dat$Species <- gsub("\\.", " ", dat$Species)
 # filtering for just condition data
 
 dat_cond <- dat %>% filter(Category == "Condition")
+dim(dat_cond)
+
 
 mod_abs <- rma.mv(
   yi   = yi_g_abs, 
@@ -222,4 +241,53 @@ p6 <- bubble_plot(mod_lnM, mod = "Recovery", ylab = "lnM", group = "Study")
 library(patchwork)
 
 (p1 + p2 + p3) / (p4 + p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+
+# egger regressoin - dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1) / (dat$sample.size.control + dat$sample.size.noise.1)
+#dat$nSE <- 1 / sqrt(dat$n0)
+#dat$nV <- 1 / dat$n0
+
+dat_cond$n0 <- (dat_cond$n1i * dat_cond$n2i) / (dat_cond$n1i + dat_cond$n2i)
+dat_cond$nSE <- 1 / sqrt(dat_cond$n0)
+dat_cond$nV <- 1 / dat_cond$n0
+
+# the model
+
+mod_egger <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | Species,
+    ~ 1 | Species.no.phylo,
+    ~ 1 | ES.ID
+  ),
+ # R = list(Species = corMat.env),
+ # Rscale = 0,
+  data   = dat_cond,
+  method = "REML")
+
+summary(mod_egger)
+
+bubble_plot(mod_egger, mod = "nSE", ylab = "lnM", group = "Study")
+
+# use yi_g_abs
+
+mod_egger_g <- rma.mv(
+  yi   = yi_g_abs,
+  V    = vi_g_abs,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | Species,
+    ~ 1 | Species.no.phylo,
+    ~ 1 | ES.ID
+  ),
+ # R = list(Species = corMat.env),
+ # Rscale = 0,
+  data   = dat_cond,
+  method = "REML")
+
+summary(mod_egger_g)
+bubble_plot(mod_egger_g, mod = "nSE", ylab = "abs(SMD)", group = "Study")
 
