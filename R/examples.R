@@ -7,6 +7,7 @@ library(metafor)        # escalc()
 library(here)
 library(orchaRd)
 library(multcomp)
+library(patchwork)
 
 source(here("R", "lnM_SAFE8.R")) 
 
@@ -26,14 +27,6 @@ source(here("R", "lnM_SAFE8.R"))
 #   get_lnM_safe(m1, m2, s1, s2, n1, n2, B = B)
 # }
 
-set.seed(123)
-dat <- dat %>% mutate(
-  lnM_safe = pmap_dfr(
-    list(mean.control, mean.noise, sd.control, sd.noise,
-         sample.size.control, sample.size.noise.1),
-    get_lnM_safe_or_na
-  )
-) %>% unnest(lnM_safe)
 
 # function for folded normal
 folded_norm <- function(mu, var) {
