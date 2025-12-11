@@ -1,5 +1,8 @@
 # examples
-# fig will be 2 x 3 (meta-analysis, meta-regression and egger regression)
+# TODO 
+# figs can be improved etc
+
+rm(list = ls())
 
 # packages
 library(tidyverse)
@@ -26,6 +29,9 @@ source(here("R", "lnM_SAFE8.R"))
 #   }
 #   get_lnM_safe(m1, m2, s1, s2, n1, n2, B = B)
 # }
+
+# TODO
+# d_eq conversion to SAFE
 
 
 # function for folded normal
@@ -155,8 +161,9 @@ ma_abs <- rma.mv(
   method = "REML")
 
 summary(ma_abs)
+i2_ml(ma_abs)
 
-orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "Study")
+p1 <- orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "Study")
 
 # meta-analysis using safe
 
@@ -173,9 +180,14 @@ ma_safe <- rma.mv(
   method = "REML",
   test = "t")
 
-summary(ma_abs)
+summary(ma_safe)
+i2_ml(ma_safe)
+ml_m1(ma_safe)
 
-orchard_plot(ma_safe,  xlab = "lnM", group = "Study")
+p2 <- orchard_plot(ma_safe,  xlab = "lnM", group = "Study")
+
+
+# N = 265 as some of missing values in moderators
 
 # meta-regression abs(d)
 mod_abs <- rma.mv(
@@ -191,7 +203,7 @@ mod_abs <- rma.mv(
   test = "t")
 summary(mod_abs)
 # bubble plot
-bubble_plot(mod_abs, mod = "Recovery", ylab = "abs(SMD)", group = "Study")
+p3 <- bubble_plot(mod_abs, mod = "Recovery", ylab = "abs(SMD)", xlab = "Recovery days", group = "Study")
 
 # meta-regression lnM
 mod_safe <- rma.mv(
@@ -208,7 +220,7 @@ mod_safe <- rma.mv(
 
 summary(mod_safe)
 # bubble plot
-bubble_plot(mod_safe, mod = "Recovery", ylab = "lnM", group = "Study")
+p4 <- bubble_plot(mod_safe, mod = "Recovery", ylab = "lnM", xlab = "Recovery days", group = "Study")
 
 # Egger regression 
 # Creaing a variable using n0
@@ -230,7 +242,7 @@ egger_abs <- rma.mv(
   test = "t")
 summary(egger_abs)
 # bubble plot
-bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", group = "Study")
+p5 <- bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", xlab = "sqrt(inverse sample size)", group = "Study")
 
 # using safe
 egger_safe <- rma.mv(
@@ -246,8 +258,51 @@ egger_safe <- rma.mv(
   test = "t")
 summary(egger_safe)
 # bubble plot
-bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", group = "Study")
+p6 <-bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "Study")
 
+
+egger_safe2 <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ nV,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+summary(egger_safe2)
+# bubble plot
+bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "Study")
+
+# making 2 x 3 panel fig
+(p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+
+
+# alternative model
+
+vtilde <- 1/dat_cond$n0
+
+Vf   <- diag(as.numeric(vtilde))
+levs <- levels(factor(dat_cond$ES.ID))
+rownames(Vf) <- levs
+colnames(Vf) <- levs
+
+ma_alt <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t",
+    R      = list(ES.ID = Vf),
+    Rscale = FALSE)
+
+summary(ma_alt)
 
 ###########
 # Example 2
@@ -365,7 +420,8 @@ ma_abs <- rma.mv(
   method = "REML",
   test = "t")
 summary(ma_abs)
-orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "study")
+i2_ml(ma_abs)
+p7 <- orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "study")
 
 # meta-analysis using safe
 ma_safe <- rma.mv(
@@ -379,7 +435,8 @@ ma_safe <- rma.mv(
   method = "REML",
   test = "t")
 summary(ma_safe)
-orchard_plot(ma_safe,  xlab = "lnM", group = "study")
+i2_ml(ma_safe)
+p8 <- orchard_plot(ma_safe,  xlab = "lnM", group = "study")
 
 # meta-regression abs(d) using taxon.for.plot
 mod_abs <- rma.mv(
@@ -395,7 +452,7 @@ mod_abs <- rma.mv(
   test = "t")
 summary(mod_abs)
 # orchard plot
-orchard_plot(mod_abs, mod = "taxon.for.plot", xlab = "abs(SMD)", group = "study")
+p9 <- orchard_plot(mod_abs, mod = "taxon.for.plot", xlab = "abs(SMD)", group = "study")
 # multiple comparison
 summary(glht(mod_abs, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
@@ -413,7 +470,7 @@ mod_safe <- rma.mv(
   test = "t")
 summary(mod_safe)
 # orchard plot
-orchard_plot(mod_safe, mod = "taxon.for.plot", xlab = "lnM", group = "study")
+p10 <- orchard_plot(mod_safe, mod = "taxon.for.plot", xlab = "lnM", group = "study")
 # multiple comparison
 summary(glht(mod_safe, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
@@ -438,7 +495,7 @@ egger_abs <- rma.mv(
   test = "t")
 summary(egger_abs)
 # bubble plot
-bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", group = "study")
+p11 <- bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", xlab = "sqrt(inverse sample size)", group = "study")
 
 # using safe
 egger_safe <- rma.mv(
@@ -454,4 +511,50 @@ egger_safe <- rma.mv(
   test = "t")
 summary(egger_safe)
 # bubble plot
-bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", group = "study")
+p12 <- bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "study")
+
+
+egger_safe2 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ nV,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(egger_safe2)
+# bubble plot
+bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "study")
+
+# making 2 x 3 panel fig
+(p7 + p8) / (p9 + p10) / (p11 + p12) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+
+
+# alternative model
+
+vtilde <- 1/dat$n0 
+
+Vf   <- diag(as.numeric(vtilde))
+levs <- levels(factor(dat$case.nr ))
+rownames(Vf) <- levs
+colnames(Vf) <- levs
+
+ma_alt2 <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t",
+  R      = list(case.nr = Vf),
+  Rscale = FALSE)
+
+summary(ma_alt2)
+
+
