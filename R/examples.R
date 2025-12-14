@@ -32,6 +32,7 @@ source(here("R", "lnM_SAFE8.R"))
 
 # TODO
 # d_eq conversion to SAFE
+# SAFE functions need % of success or not boostrap
 
 
 # function for folded normal
