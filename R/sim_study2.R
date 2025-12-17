@@ -6,6 +6,7 @@
 #   - Estimators (rma.mv):
 #       (A) Inverse-variance (IV): V = diag(vi)
 #       (B) Multiplicative (n0-based): V = 0, R = diag(vtilde), vtilde ∝ 1/n0
+#   - Coverage computed from confint() CIs (not 1.96*SE)
 #   - Grid over K_fixed_vec, n_mean_vec, lnM_targets, tau_vec
 #   - Run with 16 cores:
 #       Sys.setenv(N_WORKERS = "16"); source("fixedK_varyN_SAFE.R")
@@ -154,7 +155,7 @@ true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2, tau_delta = 0) {
   h          <- n1 * n2 / (n1 + n2)
   n0         <- 2 * h
   delta_mean <- mu1 - mu2
-  omega      <- ((n1 - 1) * sd1^2 + (n2 - 1) * sd2^2) / (n1 + n2 - 2)
+  omega      <- ((n1 - 1) * sd1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
   Delta_true <- h * (delta_mean^2 + tau_delta^2)
   0.5 * (log(Delta_true / n0) - log(omega))
 }
@@ -170,7 +171,7 @@ draw_n_vec <- function(K, n_mean, dist = c("poisson","nbinom"), nb_size = 10L, n
   pmax(n_min, as.integer(n))
 }
 
-# ------------------- One meta-analysis replicate --------------------
+# ------------------- One meta-analysis replicate (with CIs) ---------
 fit_meta_once_fixedK <- function(K_fixed,
                                  n1_mean, n2_mean,
                                  n_dist = c("poisson","nbinom"),
@@ -185,7 +186,7 @@ fit_meta_once_fixedK <- function(K_fixed,
                                  n_min = 3L) {
   n_dist <- match.arg(n_dist)
   
-  # Per-study sample sizes (vary), with floor at n_min (default 3)
+  # Per-study sample sizes (vary), floor at n_min
   n1_k <- draw_n_vec(K_fixed, n1_mean, dist = n_dist, nb_size = n_nb_size, n_min = n_min)
   n2_k <- draw_n_vec(K_fixed, n2_mean, dist = n_dist, nb_size = n_nb_size, n_min = n_min)
   
@@ -200,15 +201,18 @@ fit_meta_once_fixedK <- function(K_fixed,
   for (k in seq_len(K_fixed)) {
     sm <- draw_summaries_indep(mu1, mu2_k[k], sd1, sd2, n1_k[k], n2_k[k])
     d1 <- lnM_delta1_indep(sm["x1bar"], sm["x2bar"], sm["s1"], sm["s2"], n1_k[k], n2_k[k])
+    
     SAFE <- safe_call_indep(
       sm["x1bar"], sm["x2bar"], sm["s1"], sm["s2"], n1_k[k], n2_k[k],
       min_kept = min_kept, chunk_init = chunk_init, chunk_max = chunk_max,
       max_draws = max_draws, patience_noaccept = patience_noaccept,
       B_fallback = B_fallback, chunk_fallback = chunk_fallback, max_chunks_fallback = max_chunks_fallback
     )
-    yi[k]  <- if (is.na(d1["point"]) || is.na(SAFE$point)) SAFE$point else 2*d1["point"] - SAFE$point  # SAFE-BC
+    
+    # SAFE-BC point; fall back to SAFE mean if needed
+    yi[k]  <- if (is.na(d1["point"]) || is.na(SAFE$point)) SAFE$point else 2*d1["point"] - SAFE$point
     vi[k]  <- SAFE$var
-    n0k[k] <- 2 * n1_k[k] * n2_k[k] / (n1_k[k] + n2_k[k])  # harmonic n0
+    n0k[k] <- 2 * n1_k[k] * n2_k[k] / (n1_k[k] + n2_k[k])
   }
   
   good <- is.finite(yi) & is.finite(vi) & (vi > 0)
@@ -221,37 +225,64 @@ fit_meta_once_fixedK <- function(K_fixed,
   # (A) IV
   fit_iv <- tryCatch(
     rma.mv(yi ~ 1, V = vi, random = ~ 1 | ID, data = dat,
-           method = "REML", control = list(stepadj = 0.5, maxiter = 1000)),
+           method = "REML", test = "t"),
     error = function(e) NULL
   )
   if (is.null(fit_iv)) return(list(ok = FALSE, m_effects = m))
+  
   mu_iv   <- as.numeric(fit_iv$b[1])
   se_iv   <- sqrt(vcov(fit_iv))[1,1]
   tau2_iv <- sum(fit_iv$sigma2)
   
-  # (B) Multiplicative (weights ∝ n0  -> vtilde ∝ 1/n0)
-  vtilde <- mean(dat$n0) / dat$n0
+  ci_iv_lb <- ci_iv_ub <- NA_real_
+  iv_ci <- tryCatch(confint(fit_iv, level = 0.95), error = function(e) NULL)
+  if (!is.null(iv_ci)) {
+    mat <- if (!is.null(iv_ci$beta)) iv_ci$beta else iv_ci
+    if (!is.null(dim(mat))) {
+      ci_iv_lb <- suppressWarnings(as.numeric(mat[1, "ci.lb"]))
+      ci_iv_ub <- suppressWarnings(as.numeric(mat[1, "ci.ub"]))
+    }
+  }
+  
+  # (B) Multiplicative (weights ∝ n0 -> vtilde ∝ 1/n0)
+  vtilde <- 1 / (dat$n0/2)
   if (isTRUE(scale_mult_to_vi_mean)) vtilde <- vtilde * (mean(dat$vi) / mean(vtilde))
   Vf <- diag(as.numeric(vtilde)); levs <- levels(dat$ID); rownames(Vf) <- levs; colnames(Vf) <- levs
   
   fit_mult <- tryCatch(
     rma.mv(yi ~ 1, V = 0, random = ~ 1 | ID, data = dat,
            R = list(ID = Vf), Rscale = FALSE,
-           method = "REML", control = list(stepadj = 0.5, maxiter = 1000)),
+           method = "REML", control = list(stepadj = 0.5, maxiter = 1000),
+           test = "t"),
     error = function(e) NULL
   )
   if (is.null(fit_mult)) return(list(ok = FALSE, m_effects = m))
+  
   mu_mult   <- as.numeric(fit_mult$b[1])
   se_mult   <- sqrt(vcov(fit_mult))[1,1]
   tau2_mult <- sum(fit_mult$sigma2)
   
+  ci_mult_lb <- ci_mult_ub <- NA_real_
+  mult_ci <- tryCatch(confint(fit_mult, level = 0.95), error = function(e) NULL)
+  if (!is.null(mult_ci)) {
+    mat <- if (!is.null(mult_ci$beta)) mult_ci$beta else mult_ci
+    if (!is.null(dim(mat))) {
+      ci_mult_lb <- suppressWarnings(as.numeric(mat[1, "ci.lb"]))
+      ci_mult_ub <- suppressWarnings(as.numeric(mat[1, "ci.ub"]))
+    }
+  }
+  
   list(ok = TRUE,
        m_effects = m,
-       mu_iv = mu_iv,   se_iv = se_iv,   tau2_iv = tau2_iv,
-       mu_mult = mu_mult, se_mult = se_mult, tau2_mult = tau2_mult)
+       # IV
+       mu_iv = mu_iv, se_iv = se_iv, tau2_iv = tau2_iv,
+       ci_iv_lb = ci_iv_lb, ci_iv_ub = ci_iv_ub,
+       # Multiplicative
+       mu_mult = mu_mult, se_mult = se_mult, tau2_mult = tau2_mult,
+       ci_mult_lb = ci_mult_lb, ci_mult_ub = ci_mult_ub)
 }
 
-# -------------------- One scenario driver ----------------------------
+# -------------------- One scenario driver (CI-based coverage) --------
 run_scenario_fixedK <- function(R_meta,
                                 K_fixed,
                                 n1_mean, n2_mean,
@@ -267,10 +298,10 @@ run_scenario_fixedK <- function(R_meta,
                                 n_min = 3L) {
   n_dist <- match.arg(n_dist)
   
-  # Back-solve δ for requested lnM target using mean n (approximate but fine)
+  # Back-solve δ to hit lnM target using mean n
   delta_mu <- delta_from_target_lnM(lnM_target, n1_bar = n1_mean, n2_bar = n2_mean, sdW = 1)
   
-  # Large-sample analytic "truth" using mean n
+  # "Truth" for summaries (large-sample analytic at mean n)
   lnM_true0 <- true_lnM_indep(mu1, mu1 + delta_mu, sd1, sd2, n1_mean, n2_mean, tau_delta = tau_delta)
   
   one_rep <- function(r) {
@@ -317,9 +348,18 @@ run_scenario_fixedK <- function(R_meta,
   }
   
   ext <- function(name) vapply(out_list[ok], `[[`, numeric(1), name)
-  mu_iv   <- ext("mu_iv");   se_iv   <- ext("se_iv");   tau_iv   <- ext("tau2_iv")
-  mu_mult <- ext("mu_mult"); se_mult <- ext("se_mult"); tau_mult <- ext("tau2_mult")
-  m_eff   <- ext("m_effects")
+  
+  mu_iv     <- ext("mu_iv")
+  mu_mult   <- ext("mu_mult")
+  tau_iv    <- ext("tau2_iv")
+  tau_mult  <- ext("tau2_mult")
+  m_eff     <- ext("m_effects")
+  
+  ci_iv_lb   <- ext("ci_iv_lb");   ci_iv_ub   <- ext("ci_iv_ub")
+  ci_mult_lb <- ext("ci_mult_lb"); ci_mult_ub <- ext("ci_mult_ub")
+  
+  cover_iv_vec   <- (ci_iv_lb   <= lnM_true0) & (lnM_true0 <= ci_iv_ub)
+  cover_mult_vec <- (ci_mult_lb <= lnM_true0) & (lnM_true0 <= ci_mult_ub)
   
   tibble(
     K_fixed = K_fixed, n1_mean = n1_mean, n2_mean = n2_mean,
@@ -329,8 +369,8 @@ run_scenario_fixedK <- function(R_meta,
     bias_mult = mean(mu_mult - lnM_true0),
     rmse_iv   = sqrt(mean((mu_iv   - lnM_true0)^2)),
     rmse_mult = sqrt(mean((mu_mult - lnM_true0)^2)),
-    cover_iv   = mean(abs(mu_iv   - lnM_true0) <= 1.96 * se_iv),
-    cover_mult = mean(abs(mu_mult - lnM_true0) <= 1.96 * se_mult),
+    cover_iv   = mean(cover_iv_vec,   na.rm = TRUE),
+    cover_mult = mean(cover_mult_vec, na.rm = TRUE),
     tau2_iv_mean   = mean(tau_iv),
     tau2_mult_mean = mean(tau_mult),
     mean_m_effects = mean(m_eff),
@@ -437,7 +477,7 @@ if (sys.nframe() == 0) {
     n_mean_vec = c(10, 20, 30, 50),
     lnM_targets = c(-1.0, -0.7, -0.4, 0.0, 0.4, 0.7, 1.0),
     tau_vec = c(0.2, 0.4),
-    n_dist = "nbinom", n_nb_size = 8L,  # overdispersed n; use "poisson" if you prefer
+    n_dist = "nbinom", n_nb_size = 8L,  # overdispersed n; use "poisson" if preferred
     n_min = 3L,
     parallel_replicates = TRUE,
     parallel_scenarios = FALSE,
@@ -449,3 +489,122 @@ if (sys.nframe() == 0) {
   print(demo)
 }
 
+# ========================= Plotting section ==========================
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(ggplot2); library(scales)
+})
+
+# Map columns for plotting
+res <- demo %>%
+  rename(K     = K_fixed,
+         nbar  = n1_mean,
+         lnM_x = lnM_true0,
+         tau   = tau_delta) %>%
+  mutate(
+    setting = paste0("K=", K, ", n=", nbar),
+    tau_f   = factor(tau, levels = sort(unique(tau)),
+                     labels = paste0("tau = ", sort(unique(tau))))
+  )
+
+# Bias
+df_bias <- res %>%
+  select(setting, tau_f, lnM_x, bias_iv, bias_mult) %>%
+  pivot_longer(starts_with("bias_"), names_to = "method", values_to = "bias") %>%
+  mutate(method = recode(method, bias_iv = "IV", bias_mult = "Multiplicative"))
+
+p_bias <- ggplot(df_bias, aes(x = lnM_x, y = bias, color = method, group = method)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true)", y = "Bias", color = "Estimator",
+       title = "Bias: IV vs Multiplicative") +
+  theme_bw(base_size = 12) + theme(legend.position = "bottom")
+
+# RMSE
+df_rmse <- res %>%
+  select(setting, tau_f, lnM_x, rmse_iv, rmse_mult) %>%
+  pivot_longer(starts_with("rmse_"), names_to = "method", values_to = "rmse") %>%
+  mutate(method = recode(method, rmse_iv = "IV", rmse_mult = "Multiplicative"))
+
+p_rmse <- ggplot(df_rmse, aes(x = lnM_x, y = rmse, color = method, group = method)) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true)", y = "RMSE", color = "Estimator",
+       title = "RMSE: IV vs Multiplicative") +
+  theme_bw(base_size = 12) + theme(legend.position = "bottom")
+
+# Coverage from CIs
+if (all(c("cover_iv","cover_mult") %in% names(res))) {
+  df_cov <- res %>%
+    select(setting, tau_f, lnM_x, cover_iv, cover_mult) %>%
+    pivot_longer(starts_with("cover_"), names_to = "method", values_to = "coverage") %>%
+    mutate(method = recode(method, cover_iv = "IV", cover_mult = "Multiplicative"))
+  
+  p_cover <- ggplot(df_cov, aes(x = lnM_x, y = coverage, color = method, group = method)) +
+    geom_hline(yintercept = 0.95, linetype = 2) +
+    geom_line() + geom_point(size = 1.8) +
+    scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+    facet_grid(tau_f ~ setting, scales = "free_x") +
+    labs(x = "lnM (true)", y = "Coverage (95% nominal)", color = "Estimator",
+         title = "Interval coverage: IV vs Multiplicative (CI-based)") +
+    theme_bw(base_size = 12) + theme(legend.position = "bottom")
+}
+
+# Estimated tau^2 vs truth
+if (all(c("tau2_iv_mean","tau2_mult_mean") %in% names(res))) {
+  df_tau <- res %>%
+    select(setting, tau_f, tau, lnM_x, tau2_iv_mean, tau2_mult_mean) %>%
+    pivot_longer(ends_with("_mean"), names_to = "method", values_to = "tau2_est") %>%
+    mutate(method = recode(method, "tau2_iv_mean"="IV","tau2_mult_mean"="Multiplicative"))
+  
+  tau_lines <- res %>% distinct(tau_f, tau)
+  
+  p_tau <- ggplot(df_tau, aes(x = lnM_x, y = tau2_est, color = method, group = method)) +
+    geom_line() + geom_point(size = 1.8) +
+    geom_hline(data = tau_lines, aes(yintercept = tau), linetype = 3,
+               inherit.aes = FALSE, colour = "grey40") +
+    facet_grid(tau_f ~ setting, scales = "free_x") +
+    labs(x = "lnM (true)", y = expression(hat(tau)^2~"(mean across reps)"),
+         color = "Estimator",
+         title = expression(paste("Between-study variance ", tau^2, ": estimated vs truth"))) +
+    theme_bw(base_size = 12) + theme(legend.position = "bottom")
+}
+
+# Invalid replicate rate
+p_invalid <- ggplot(res, aes(x = lnM_x, y = setting, fill = invalid_meta_rate)) +
+  geom_tile(color = "white") +
+  facet_wrap(~ tau_f, nrow = 1) +
+  scale_fill_gradient(limits = c(0, 1), labels = percent_format(accuracy = 1)) +
+  labs(x = "lnM (true)", y = "Scenario", fill = "Invalid rate",
+       title = "Proportion of failed meta-analysis replicates") +
+  theme_bw(base_size = 12) + theme(legend.position = "right")
+
+# RMSE ratio (Mult / IV)
+df_ratio <- res %>%
+  transmute(setting, tau_f, x = lnM_x,
+            rmse_ratio = rmse_mult / pmax(rmse_iv, .Machine$double.eps))
+
+p_ratio <- ggplot(df_ratio, aes(x = x, y = rmse_ratio, group = 1)) +
+  geom_hline(yintercept = 1, linetype = 2) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  scale_y_log10() +
+  labs(x = "lnM (true)", y = "RMSE ratio (Mult / IV, log scale)",
+       title = "Relative performance (<1 favours Multiplicative)") +
+  theme_bw(base_size = 12)
+
+# Print
+p_bias
+p_rmse
+if (exists("p_cover")) p_cover
+if (exists("p_tau"))   p_tau
+p_invalid
+p_ratio
+
+# # Optional saves:
+# ggsave("bias_iv_vs_mult.pdf", p_bias, width = 10, height = 6)
+# ggsave("rmse_iv_vs_mult.pdf", p_rmse, width = 10, height = 6)
+# if (exists("p_cover")) ggsave("coverage_iv_vs_mult.pdf", p_cover, width = 10, height = 6)
+# if (exists("p_tau"))   ggsave("tau2_iv_vs_mult.pdf", p_tau, width = 10, height = 6)
+# ggsave("invalid_rate.pdf", p_invalid, width = 10, height = 4.5)
+# ggsave("rmse_ratio_mult_over_iv.pdf", p_ratio, width = 10, height = 6)
