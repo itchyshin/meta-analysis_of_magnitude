@@ -1,16 +1,14 @@
 # ================================================================
-# simulation16_parallel_SAFE.R — lnM simulations with NEW SAFE and 200+ core support
+# simulation16_using_SAFE.R — lnM simulations with NEW SAFE (direct calls)
 # - Assumes SAFE_fun.R defines:
 #     safe_lnM_indep(x1bar,x2bar,s1,s2,n1,n2,
 #                    min_kept, chunk_init, chunk_max, max_draws, patience_noaccept)
 #     safe_lnM_dep  (x1bar,x2bar,s1,s2,n,r,
 #                    min_kept, chunk_init, chunk_max, max_draws, patience_noaccept)
-# - Point estimators: PI (delta plug-in) and SAFE-BC (2*PI - SAFE$point; fallback to SAFE$point if PI NA)
-# - Variance estimators: delta-method vs SAFE bootstrap
-# - Computes Eq. (16)-(20): bias, MC variances, variance relative bias (4 combos), coverage, RMSE
-# - Restores "simulation15" plots + adds SAFE acceptance and four-way rel. bias grid
-# - Fully parallel over parameter sets (216 tasks); supports 200+ cores
-# - No Greek symbols in labels (use "delta", "theta", etc.)
+# - Point estimators: PI (Δ plug-in) and SAFE-BC (2*PI - SAFE$point; fallback to SAFE$point if PI NA)
+# - Variance estimators: Δ-method vs SAFE bootstrap
+# - Computes Eq. (16)–(20): bias, MC variances, variance relative bias (4 combos), coverage, RMSE
+# - Restores “simulation15” plots + adds SAFE acceptance and four-way rel. bias grid
 # ================================================================
 
 suppressPackageStartupMessages({
@@ -20,8 +18,6 @@ suppressPackageStartupMessages({
   library(purrr)
   library(tibble)
   library(ggplot2)
-  library(pbapply)
-  library(parallel)
 })
 
 # ------------------- Load the latest SAFE -----------------------
@@ -35,14 +31,7 @@ if (!exists("safe_lnM_indep") || !exists("safe_lnM_dep")) {
   stop("SAFE_fun.R must define safe_lnM_indep() and safe_lnM_dep().")
 }
 
-# Optional: prevent oversubscription from OpenBLAS/MKL
-if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-  RhpcBLASctl::blas_set_num_threads(1L)
-  RhpcBLASctl::omp_set_num_threads(1L)
-}
-
 # ------------------- Global controls / knobs --------------------
-RNGkind("L'Ecuyer-CMRG")
 SEED_MAIN <- 12345
 set.seed(SEED_MAIN)
 
@@ -56,13 +45,13 @@ CHUNK_MAX_SAFE   <- 2e6      # cap for adaptive chunk
 MAX_DRAWS_SAFE   <- Inf      # safety cap
 PATIENCE_SAFE    <- 5        # consecutive zero-accept chunks before early stop
 
-# Cap for delta-method variance (avoid wild outliers)
+# Cap for Δ-method variance
 DELTA_VAR_CAP <- 20
 
 # Paired correlation
 r_default <- 0.8
 
-# theta grid and designs
+# θ grid and designs
 theta_grid <- c(0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1,1.2,1.4,1.6,1.8,2,2.5,3,4,5)
 
 designs_indep <- list(
@@ -123,7 +112,7 @@ lnM_delta1_dep <- function(x1bar, x2bar, s1, s2, n, r) {
   c(point = lnM, var = Var1, se = sqrt(Var1))
 }
 
-# ------------------- "True" lnM (expected MS) -------------------
+# ------------------- “True” lnM (expected MS) -------------------
 true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   h     <- n1*n2/(n1+n2)
   n0    <- 2*h
@@ -133,17 +122,17 @@ true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   0.5 * (log(Delta_true / n0) - log(omega))
 }
 
-# Paired: Delta_true = (n/2)*delta^2 - r*sigma1*sigma2 ; E[MSW] = (sigma1^2+sigma2^2)/2
+# Paired: Δ_true = (n/2)δ^2 - r σ1 σ2 ; E[MSW] = (σ1^2+σ2^2)/2
 true_lnM_dep <- function(mu1, mu2, sd1, sd2, n, r) {
   delta <- mu1 - mu2
   sigmaD2 <- sd1^2 + sd2^2 - 2*r*sd1*sd2
   E_MSW   <- (sd1^2 + sd2^2)/2
-  Delta_true <- (n/2)*delta^2 + (1/2)*sigmaD2 - E_MSW  # = (n/2)*delta^2 - r*sigma1*sigma2
+  Delta_true <- (n/2)*delta^2 + (1/2)*sigmaD2 - E_MSW  # = (n/2)δ^2 - r σ1 σ2
   n0 <- n
   0.5 * (log(Delta_true / n0) - log(E_MSW))
 }
 
-# ------------------- Summary draws (Normal theory) ---------------
+# ------------------- Summary draws (fast, Normal theory) --------
 draw_summaries_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   x1bar <- rnorm(1L, mu1, sd1/sqrt(n1))
   x2bar <- rnorm(1L, mu2, sd2/sqrt(n2))
@@ -202,7 +191,7 @@ run_param_indep <- function(theta, n1, n2,
     status_vec[k] <- SAFE$status
     
     # SAFE-BC: 2*PI - SAFE point; fallback to SAFE point if PI undefined
-    lnM_BC[k]  <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
+    lnM_BC[k] <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
     Var_SAFE[k] <- SAFE$var
   }
   
@@ -289,7 +278,7 @@ run_param_dep <- function(theta, n,
     total_vec[k]  <- SAFE$total
     status_vec[k] <- SAFE$status
     
-    lnM_BC[k]  <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
+    lnM_BC[k] <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
     Var_SAFE[k] <- SAFE$var
   }
   
@@ -336,121 +325,40 @@ run_param_dep <- function(theta, n,
   )
 }
 
-# ------------------- Parameter grid builders --------------------
-build_param_grid <- function() {
-  indep_tbl <- tidyr::expand_grid(theta = theta_grid, dn = designs_indep) %>%
-    mutate(n1 = purrr::map_int(dn, 1L), n2 = purrr::map_int(dn, 2L)) %>%
-    select(-dn) %>%
-    mutate(design = "indep")
-  paired_tbl <- tidyr::expand_grid(theta = theta_grid, n = designs_paired_n) %>%
-    transmute(theta = theta, n1 = n, n2 = n, design = "paired")
-  bind_rows(indep_tbl, paired_tbl)
+# ------------------- Run full grid -------------------------------
+run_full_simulation <- function(K = K_default,
+                                min_kept = MIN_KEPT_SAFE,
+                                chunk_init = CHUNK_INIT_SAFE,
+                                chunk_max = CHUNK_MAX_SAFE,
+                                max_draws = MAX_DRAWS_SAFE,
+                                patience_noaccept = PATIENCE_SAFE,
+                                r = r_default) {
+  indep_tbl <- expand_grid(theta = theta_grid, dn = designs_indep) %>%
+    mutate(n1 = map_int(dn, 1L), n2 = map_int(dn, 2L)) %>%
+    select(-dn)
+  
+  paired_tbl <- expand_grid(theta = theta_grid, n = designs_paired_n)
+  
+  res_indep <- pmap_dfr(indep_tbl,
+                        ~ run_param_indep(theta = ..1, n1 = ..2, n2 = ..3,
+                                          K = K,
+                                          min_kept = min_kept,
+                                          chunk_init = chunk_init,
+                                          chunk_max = chunk_max,
+                                          max_draws = max_draws,
+                                          patience_noaccept = patience_noaccept))
+  res_paired <- pmap_dfr(paired_tbl,
+                         ~ run_param_dep(theta = ..1, n = ..2, r = r,
+                                         K = K,
+                                         min_kept = min_kept,
+                                         chunk_init = chunk_init,
+                                         chunk_max = chunk_max,
+                                         max_draws = max_draws,
+                                         patience_noaccept = patience_noaccept))
+  bind_rows(res_indep, res_paired)
 }
 
-# ------------------- Parallel driver (200+ cores) ----------------
-run_full_simulation_parallel <- function(
-    K = K_default,
-    min_kept = MIN_KEPT_SAFE,
-    chunk_init = CHUNK_INIT_SAFE,
-    chunk_max = CHUNK_MAX_SAFE,
-    max_draws = MAX_DRAWS_SAFE,
-    patience_noaccept = PATIENCE_SAFE,
-    r = r_default,
-    n_cores = NULL,                          # set to 200+ as needed
-    cluster_type = c("auto","psock","fork"), # "fork" only on Unix
-    export_SAFE_fun = TRUE,                  # source SAFE_fun.R on workers
-    safe_fun_path = SAFE_FILE
-) {
-  pg <- build_param_grid()
-  n_tasks <- nrow(pg)
-  
-  if (is.null(n_cores)) {
-    env_cores <- suppressWarnings(as.integer(Sys.getenv("N_CORES", "")))
-    n_cores <- if (!is.na(env_cores) && env_cores > 0) env_cores else parallel::detectCores()
-  }
-  n_cores <- min(n_cores, n_tasks)
-  cluster_type <- match.arg(cluster_type)
-  
-  # Worker function for one row
-  .run_one_param <- function(row) {
-    if (row$design == "indep") {
-      run_param_indep(theta = row$theta, n1 = row$n1, n2 = row$n2,
-                      K = K,
-                      min_kept = min_kept,
-                      chunk_init = chunk_init,
-                      chunk_max = chunk_max,
-                      max_draws = max_draws,
-                      patience_noaccept = patience_noaccept)
-    } else {
-      run_param_dep(theta = row$theta, n = row$n1, r = r,
-                    K = K,
-                    min_kept = min_kept,
-                    chunk_init = chunk_init,
-                    chunk_max = chunk_max,
-                    max_draws = max_draws,
-                    patience_noaccept = patience_noaccept)
-    }
-  }
-  
-  if (n_cores <= 1) {
-    message("Running serially...")
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]))
-    return(dplyr::bind_rows(res_list))
-  }
-  
-  on_windows <- (.Platform$OS.type == "windows")
-  use_fork   <- (!on_windows) && (cluster_type %in% c("fork","auto"))
-  use_psock  <- on_windows || cluster_type == "psock" || (!use_fork && cluster_type == "auto")
-  
-  if (use_fork) {
-    options(mc.cores = n_cores)
-    if (export_SAFE_fun && file.exists(safe_fun_path)) source(safe_fun_path)
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]), cl = n_cores)
-  } else if (use_psock) {
-    cl <- parallel::makeCluster(n_cores, type = "PSOCK")
-    on.exit(parallel::stopCluster(cl), add = TRUE)
-    parallel::clusterSetRNGStream(cl, iseed = SEED_MAIN)
-    
-    parallel::clusterEvalQ(cl, {
-      suppressPackageStartupMessages({
-        library(MASS); library(dplyr); library(tidyr); library(purrr); library(tibble)
-      })
-    })
-    
-    if (export_SAFE_fun && file.exists(safe_fun_path)) {
-      parallel::clusterExport(cl, varlist = "safe_fun_path", envir = environment())
-      parallel::clusterEvalQ(cl, source(safe_fun_path))
-    }
-    
-    # Export needed symbols
-    parallel::clusterExport(
-      cl,
-      varlist = c(
-        # controls
-        "K","min_kept","chunk_init","chunk_max","max_draws","patience_noaccept","r",
-        # data/params
-        "pg","theta_grid","designs_indep","designs_paired_n",
-        # helpers & estimators
-        "posify","safe_gap",
-        "lnM_delta1_indep","lnM_delta1_dep",
-        "true_lnM_indep","true_lnM_dep",
-        "draw_summaries_indep","draw_summaries_dep",
-        "run_param_indep","run_param_dep",
-        # RNG seed to allow per-worker reproducibility if needed inside
-        "SEED_MAIN"
-      ),
-      envir = environment()
-    )
-    
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]), cl = cl)
-  } else {
-    stop("Unknown cluster_type")
-  }
-  
-  dplyr::bind_rows(res_list)
-}
-
-# ------------------- Plot helpers (simulation15 + extras) --------
+# ------------------- Plot helpers (15 + extras) ------------------
 facet_ordering <- function(results) {
   results %>%
     mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2)) %>%
@@ -478,7 +386,7 @@ plot_bias <- function(results) {
     geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Bias (estimate - true lnM)", colour = NULL) +
+    labs(x = expression(theta), y = "Bias (estimate \u2212 true lnM)", colour = NULL) +
     scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
     theme_bw(11)
 }
@@ -486,7 +394,7 @@ plot_bias <- function(results) {
 plot_relbias_15 <- function(results) {
   df <- bind_rows(
     results %>% select(theta, facet_label, rb_delta_BC) %>%
-      rename(relbias = rb_delta_BC) %>% mutate(estimator = "delta-var vs MC(BC)"),
+      rename(relbias = rb_delta_BC) %>% mutate(estimator = "Δ-var vs MC(BC)"),
     results %>% select(theta, facet_label, rb_SAFE_BC) %>%
       rename(relbias = rb_SAFE_BC)  %>% mutate(estimator = "SAFE-var vs MC(BC)")
   )
@@ -494,8 +402,8 @@ plot_relbias_15 <- function(results) {
     geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Relative bias of variance (%)", colour = NULL) +
-    scale_colour_manual(values = c("delta-var vs MC(BC)" = "firebrick",
+    labs(x = expression(theta), y = "Relative bias of Var (%)", colour = NULL) +
+    scale_colour_manual(values = c("Δ-var vs MC(BC)" = "firebrick",
                                    "SAFE-var vs MC(BC)" = "steelblue")) +
     theme_bw(11)
 }
@@ -509,21 +417,21 @@ plot_coverage <- function(results) {
     geom_hline(yintercept = 0.95, linetype = 2, colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Empirical coverage", colour = NULL) +
+    labs(x = expression(theta), y = "Empirical coverage", colour = NULL) +
     scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
     theme_bw(11)
 }
 
 plot_rmse <- function(results) {
   df <- bind_rows(
-    results %>% transmute(theta, facet_label, estimator = "PI",      rmse = rmse_PI),
+    results %>% transmute(theta, facet_label, estimator = "PI",     rmse = rmse_PI),
     results %>% transmute(theta, facet_label, estimator = "SAFE-BC", rmse = rmse_BC)
   )
   ggplot(df, aes(theta, rmse, colour = estimator, group = estimator)) +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
     scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
-    labs(x = "theta", y = "RMSE (ln Mhat - ln M)", colour = NULL) +
+    labs(x = expression(theta), y = "RMSE ( ln M̂ − ln M )", colour = NULL) +
     theme_bw(11)
 }
 
@@ -531,50 +439,41 @@ plot_safe_accept <- function(results) {
   ggplot(results, aes(theta, SAFE_kept_rate)) +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "SAFE acceptance rate (kept/total)") +
+    labs(x = expression(theta), y = "SAFE acceptance rate (kept/total)") +
     theme_bw(11)
 }
 
 plot_relbias_grid <- function(results) {
   df <- bind_rows(
-    results %>% transmute(theta, facet_label, estimator = "delta-var", baseline = "MC(PI)", relbias = rb_delta_PI),
-    results %>% transmute(theta, facet_label, estimator = "delta-var", baseline = "MC(BC)", relbias = rb_delta_BC),
-    results %>% transmute(theta, facet_label, estimator = "SAFE-var",  baseline = "MC(PI)", relbias = rb_SAFE_PI),
-    results %>% transmute(theta, facet_label, estimator = "SAFE-var",  baseline = "MC(BC)", relbias = rb_SAFE_BC)
+    results %>% transmute(theta, facet_label, estimator = "Δ-var",    baseline = "MC(PI)", relbias = rb_delta_PI),
+    results %>% transmute(theta, facet_label, estimator = "Δ-var",    baseline = "MC(BC)", relbias = rb_delta_BC),
+    results %>% transmute(theta, facet_label, estimator = "SAFE-var", baseline = "MC(PI)", relbias = rb_SAFE_PI),
+    results %>% transmute(theta, facet_label, estimator = "SAFE-var", baseline = "MC(BC)", relbias = rb_SAFE_BC)
   )
   ggplot(df, aes(theta, relbias, group = interaction(estimator, baseline),
                  colour = estimator, linetype = baseline)) +
     geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Relative bias of variance (%)",
+    labs(x = expression(theta), y = "Relative bias of Var (%)",
          colour = "Estimator", linetype = "Baseline") +
-    scale_colour_manual(values = c("delta-var" = "firebrick", "SAFE-var" = "steelblue")) +
+    scale_colour_manual(values = c("Δ-var" = "firebrick", "SAFE-var" = "steelblue")) +
     theme_bw(11)
 }
 
-# ------------------- Main: run + save + plot ---------------------
+# ------------------- Run (demo) + Save + Plot --------------------
 if (sys.nframe() == 0) {
-  message("Running a small parallel demo; increase K and MIN_KEPT_SAFE for HPC-scale runs.")
-  K_demo   <- as.integer(Sys.getenv("K_DEMO",    "200"))
-  MIN_demo <- as.integer(Sys.getenv("MIN_KEPT",  "2000"))
-  CH_demo  <- as.integer(Sys.getenv("CHUNK_INIT","2000"))
-  N_CORES  <- suppressWarnings(as.integer(Sys.getenv("N_CORES", "")))
-  if (is.na(N_CORES) || N_CORES <= 0) N_CORES <- min( parallel::detectCores(), 216L )
+  message("Running a small demo; increase K and MIN_KEPT_SAFE for HPC-scale runs.")
+  K_demo  <- 200
+  MIN_demo <- 2000
+  CH_demo <- 2000
   
-  results <- run_full_simulation_parallel(
-    K = K_demo,
-    min_kept = MIN_demo,
-    chunk_init = CH_demo,
-    chunk_max = CHUNK_MAX_SAFE,
-    max_draws = MAX_DRAWS_SAFE,
-    patience_noaccept = PATIENCE_SAFE,
-    r = r_default,
-    n_cores = N_CORES,
-    cluster_type = "auto",
-    export_SAFE_fun = TRUE,
-    safe_fun_path = SAFE_FILE
-  )
+  results <- run_full_simulation(K = K_demo,
+                                 min_kept = MIN_demo,
+                                 chunk_init = CH_demo,
+                                 chunk_max = CHUNK_MAX_SAFE,
+                                 max_draws = MAX_DRAWS_SAFE,
+                                 patience_noaccept = PATIENCE_SAFE)
   
   # Save
   stamp <- format(Sys.Date(), "%Y-%m-%d")
@@ -584,11 +483,11 @@ if (sys.nframe() == 0) {
   # Facet ordering like simulation15
   results <- facet_ordering(results)
   
-  # Plots from simulation15
-  p_bias     <- plot_bias(results);        print(p_bias)
-  p_relbias  <- plot_relbias_15(results);  print(p_relbias)
-  p_cover    <- plot_coverage(results);    print(p_cover)
-  p_rmse     <- plot_rmse(results);        print(p_rmse)
+  # Plots from simulaiton15
+  p_bias     <- plot_bias(results);       print(p_bias)
+  p_relbias  <- plot_relbias_15(results); print(p_relbias)
+  p_cover    <- plot_coverage(results);   print(p_cover)
+  p_rmse     <- plot_rmse(results);       print(p_rmse)
   
   # Extras
   p_accept   <- plot_safe_accept(results); print(p_accept)
@@ -597,18 +496,8 @@ if (sys.nframe() == 0) {
   # Quick roll-ups
   message(sprintf("Mean |bias| PI: %.4f",  mean(abs(results$bias_PI), na.rm = TRUE)))
   message(sprintf("Mean |bias| SAFE-BC: %.4f", mean(abs(results$bias_BC), na.rm = TRUE)))
-  message(sprintf("Mean |relbias| delta-var vs MC(BC): %.2f%%",
+  message(sprintf("Mean |relbias| Δ-var vs MC(BC): %.2f%%",
                   mean(abs(results$rb_delta_BC), na.rm = TRUE)))
   message(sprintf("Mean |relbias| SAFE-var vs MC(BC): %.2f%%",
                   mean(abs(results$rb_SAFE_BC),  na.rm = TRUE)))
 }
-
-# ------------------- How to run (examples) -----------------------
-# 1) Single-node, Linux/macOS, 200 cores (fork):
-#    N_CORES=200 K_DEMO=2000 MIN_KEPT=2000 CHUNK_INIT=4000 Rscript simulation16_parallel_SAFE.R
-#
-# 2) Windows or multi-node PSOCK:
-#    N_CORES=200 Rscript simulation16_parallel_SAFE.R
-#
-# 3) Increase accuracy:
-#    K_DEMO=10000 MIN_KEPT=100000 CHUNK_INIT=4000 N_CORES=216 Rscript simulation16_parallel_SAFE.R
