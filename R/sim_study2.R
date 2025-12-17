@@ -218,7 +218,7 @@ fit_meta_once <- function(K_study,
   mu_iv   <- as.numeric(fit_iv$b[1]); se_iv <- sqrt(vcov(fit_iv))[1,1]; tau2_iv <- sum(fit_iv$sigma2)
   
   # (B) Multiplicative (n0-based) via rma.mv using R = diag(vtilde) with vtilde ∝ 1/n0
-  inv_w_n0 <- 1 / dat$n0  # ∝ 1 / n0
+  inv_w_n0 <- 1 / (dat$n0/2)  # ∝ 1 / n0
   vtilde   <- inv_w_n0
   if (isTRUE(scale_mult_to_vi_mean)) vtilde <- vtilde * (mean(dat$vi) / mean(vtilde))
   Vf <- diag(as.numeric(vtilde)); levs <- levels(dat$ID); rownames(Vf) <- levs; colnames(Vf) <- levs
