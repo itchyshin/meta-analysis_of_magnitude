@@ -1,5 +1,5 @@
 # ================================================================
-#  simulation15.R  —  lnM simulations with Chi-square / Wishart SAFE
+#  simulation16.R  —  lnM simulations with Chi-square / Wishart SAFE
 #  - Single delta-1 only (indep/paired) per MS Eq. (6),(7)
 #  - SAFE uses Normal + Chi-square (indep) / Wishart (paired)
 #  - Computes all combinations for Eq. (18)-(20):
@@ -427,3 +427,4 @@ if (sys.nframe() == 0) {
   # Write to disk if desired:
   # write.csv(demo_res, "simulation15_results.csv", row.names = FALSE)
 }
+
