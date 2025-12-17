@@ -224,6 +224,10 @@ compare_methods(x1 = 8, x2 = 5,
                 n1 = 40, r  = 0.8,
                 B  = 5e4, chunk = 4000, max_chunks = 50)
 
+compare_methods(x1 = 5, x2 = 5,
+                s1 = 2,  s2 = 2.2,
+                n1 = 40, r  = 0.8,
+                B  = 5e4, chunk = 4000, max_chunks = 50)
 
 # note - adjusted lnM and d equivalent
 
