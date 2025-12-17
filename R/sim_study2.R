@@ -155,7 +155,7 @@ true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2, tau_delta = 0) {
   h          <- n1 * n2 / (n1 + n2)
   n0         <- 2 * h
   delta_mean <- mu1 - mu2
-  omega      <- ((n1 - 1) * sd1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
+  omega      <- ((n1 - 1) * sd1^2 + (n2 - 1) * sd2^2) / (n1 + n2 - 2)
   Delta_true <- h * (delta_mean^2 + tau_delta^2)
   0.5 * (log(Delta_true / n0) - log(omega))
 }
