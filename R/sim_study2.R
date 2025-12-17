@@ -1,13 +1,13 @@
 # ===================================================================
-# SAFE-only meta-analysis simulation (parallel, 16+ cores ready)
+# SAFE-only meta-analysis simulation (parallel, progress enabled)
 #   - Per-study effect: lnM via SAFE; point = SAFE-BC (2*Delta1 - SAFE_mean)
-#   - Per-study var:    SAFE variance only (no delta-method anywhere)
-#   - Compare meta-analytic estimators (all via rma.mv):
+#   - Per-study var:    SAFE variance only
+#   - Compare via rma.mv:
 #       (A) Inverse-variance (IV): V = diag(vi)
 #       (B) Multiplicative (n0-based): V = 0, R = diag(vtilde) with vtilde ∝ 1/n0
-#     (also report two references: unweighted mean; n0-weighted mean)
-#   - Scenario grid includes positives: 0.4, 0.7, 1.0 (and more if desired)
-#   - Parallelization via future/furrr; plan set once via set_parallel_plan()
+#     (plus: unweighted mean; n0-weighted mean)
+#   - Scenario grid includes positives: 0.4, 0.7, 1.0 (and more)
+#   - Progress bars for replicates & scenarios; lightweight logging
 #   - To run on 16 cores locally:
 #       Sys.setenv(N_WORKERS = "16"); source("this_script.R")
 # ===================================================================
@@ -22,7 +22,13 @@ suppressPackageStartupMessages({
   library(purrr)
   library(furrr)
   library(future)
+  library(progressr)
 })
+
+# ------------------------- Progress handlers -------------------------
+# Global text progress bar (works in terminals & most IDEs)
+progressr::handlers(global = TRUE)
+progressr::handlers("txtprogressbar")
 
 # ------------------------- RNG + helpers ----------------------------
 
@@ -44,13 +50,15 @@ set_parallel_plan <- function(n_workers = NULL, backend = c("multisession","mult
   } else {
     future::plan(future::multisession, workers = n_workers)
   }
+  message(sprintf("[plan] backend=%s; workers=%d", backend, n_workers))
   invisible(n_workers)
 }
 
 # A single furrr options object to ensure workers load needed packages
 .FOPTS <- furrr_options(
   seed = TRUE,
-  packages = c("metafor","MASS","tibble","dplyr","purrr")
+  packages = c("metafor","MASS","tibble","dplyr","purrr"),
+  scheduling = 2  # bigger chunks per worker
 )
 
 # --------------------- Load SAFE (new API if present) ----------------
@@ -61,6 +69,9 @@ SAFE_HAS_NEW <- FALSE
 if (file.exists(SAFE_FILE)) {
   source(SAFE_FILE)
   SAFE_HAS_NEW <- exists("safe_lnM_indep")
+  message(sprintf("[SAFE] Using %s API", if (SAFE_HAS_NEW) "NEW" else "fallback"))
+} else {
+  message("[SAFE] SAFE_fun.R not found; using fallback SAFE")
 }
 
 # Fallback SAFE (B/chunk) if new API not available
@@ -84,6 +95,9 @@ if (file.exists(SAFE_FILE)) {
       kept <- kept + sum(good)
       lnM_star <- c(lnM_star,
                     0.5 * (log((MSB[good] - MSW[good])/(2*h)) - log(MSW[good])))
+    }
+    if (attempts %% 5L == 0L) {
+      message(sprintf("[SAFE-fallback] attempts=%d kept=%d total=%d", attempts, kept, total))
     }
   }
   lnM_star <- if (length(lnM_star)) lnM_star[seq_len(min(B, length(lnM_star)))] else lnM_star
@@ -275,10 +289,19 @@ run_scenario <- function(R_meta,
   }
   
   reps <- seq_len(R_meta)
-  out_list <- if (parallel_replicates) {
-    future_map(reps, one_rep, .options = .FOPTS)
+  if (parallel_replicates) {
+    out_list <- progressr::with_progress({
+      future_map(reps, one_rep, .options = .FOPTS, .progress = TRUE)
+    })
   } else {
-    map(reps, one_rep)
+    # sequential path with a simple progress bar
+    pb <- txtProgressBar(min = 0, max = length(reps), style = 3)
+    on.exit(close(pb), add = TRUE)
+    out_list <- vector("list", length(reps))
+    for (i in seq_along(reps)) {
+      out_list[[i]] <- one_rep(reps[i])
+      if (i %% 5L == 0L) setTxtProgressBar(pb, i) else setTxtProgressBar(pb, i)
+    }
   }
   
   ok <- vapply(out_list, function(z) isTRUE(z$ok), logical(1))
@@ -330,8 +353,20 @@ run_scenario <- function(R_meta,
 
 # ---------------------- Master grid (parallel) -----------------------
 
+# Helper: sequential map with a progress bar (when not parallelizing scenarios)
+seq_progress_map <- function(idx, fun) {
+  pb <- txtProgressBar(min = 0, max = length(idx), style = 3)
+  on.exit(close(pb), add = TRUE)
+  res <- vector("list", length(idx))
+  for (i in seq_along(idx)) {
+    res[[i]] <- fun(idx[i])
+    setTxtProgressBar(pb, i)
+  }
+  res
+}
+
 run_grid <- function(
-    # Parallel config (plan is set outside via set_parallel_plan(); we don't touch it here)
+  # Parallel plan is set outside via set_parallel_plan()
   n_workers = NULL,                      # kept for interface symmetry; not used internally
   parallel_replicates = TRUE,
   parallel_scenarios  = FALSE,
@@ -355,10 +390,18 @@ run_grid <- function(
     KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
   )
   grid <- tibble::as_tibble(grid)
+  message(sprintf("[grid] Scenarios: %d (K={%s}; n={%s}; lnM=%d; tau={%s})",
+                  nrow(grid),
+                  paste(K_study_vec, collapse=","),
+                  paste(n_vec, collapse=","),
+                  length(lnM_targets),
+                  paste(tau_vec, collapse=",")))
   
   run_one <- function(irow) {
     par <- grid[irow,]
-    run_scenario(
+    message(sprintf("[scenario %d/%d] K=%d; n=%d; lnM=%.3f; tau=%.2f  @%s",
+                    irow, nrow(grid), par$K_study, par$n, par$lnM, par$tau, format(Sys.time(), "%H:%M:%S")))
+    res <- run_scenario(
       R_meta = R_meta,
       K_study = par$K_study,
       n1_mean = par$n, n2_mean = par$n,
@@ -371,13 +414,17 @@ run_grid <- function(
       scale_mult_to_vi_mean = scale_mult_to_vi_mean,
       parallel_replicates = parallel_replicates
     ) %>% mutate(scenario_id = irow)
+    message(sprintf("[scenario %d] done @%s", irow, format(Sys.time(), "%H:%M:%S")))
+    res
   }
   
   idx <- seq_len(nrow(grid))
   res_list <- if (parallel_scenarios) {
-    future_map(idx, run_one, .options = .FOPTS)
+    progressr::with_progress({
+      future_map(idx, run_one, .options = .FOPTS, .progress = TRUE)
+    })
   } else {
-    map(idx, run_one)
+    seq_progress_map(idx, run_one)
   }
   
   bind_rows(res_list) %>%
@@ -387,16 +434,17 @@ run_grid <- function(
 
 # --------------------------- Demo run --------------------------------
 # Use 16 cores locally:
-#   Sys.setenv(N_WORKERS = "16")
+#   Sys.setenv(N_WORKERS = "")
 #   source("this_script.R")
 # Or run manually:
 #   set_parallel_plan(16, backend="multisession")
 #   results <- run_grid(R_meta=400, parallel_replicates=TRUE, parallel_scenarios=FALSE)
 
 if (sys.nframe() == 0) {
-  message("=== Quick demo (16 cores, multisession) ===")
+  message("=== Quick demo (progress enabled) ===")
   Sys.setenv(N_WORKERS = Sys.getenv("N_WORKERS", "16"))
   set_parallel_plan(n_workers = as.integer(Sys.getenv("N_WORKERS")), backend = "multisession")
+  message(sprintf("[start] %s", format(Sys.time(), "%H:%M:%S")))
   
   demo <- run_grid(
     n_workers = as.integer(Sys.getenv("N_WORKERS")),  # not used internally, just for clarity
@@ -410,5 +458,125 @@ if (sys.nframe() == 0) {
     min_kept = 1000, chunk_init = 3000,
     B_fallback = 1000, chunk_fallback = 3000
   )
+  
+  message(sprintf("[end]   %s", format(Sys.time(), "%H:%M:%S")))
   print(demo)
 }
+
+# ---- Setup ----
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)      # for percent_format
+# optional:
+# install.packages("patchwork")
+# library(patchwork)
+
+# Choose x-axis: "lnM_true0" (recommended) or "lnM_target"
+xvar <- "lnM_true0"
+
+demo2 <- demo %>%
+  mutate(
+    setting = paste0("K=", K_study, ", n=", n1),  # n1==n2 here
+    tau_f   = factor(tau_delta, levels = sort(unique(tau_delta)),
+                     labels = paste0("tau = ", sort(unique(tau_delta))))
+  )
+
+# ---- 1) Bias curves (IV vs Multiplicative + refs) ----
+df_bias <- demo2 %>%
+  select(setting, tau_f, all_of(xvar),
+         bias_iv, bias_mult, bias_uw, bias_wn0) %>%
+  pivot_longer(starts_with("bias_"),
+               names_to = "method", values_to = "bias") %>%
+  mutate(method = sub("^bias_", "", method),
+         method = factor(method, levels = c("iv","mult","uw","wn0"),
+                         labels = c("IV","Multiplicative","Unweighted","n0-weighted")))
+
+p_bias <- ggplot(df_bias, aes(x = .data[[xvar]], y = bias, color = method, group = method)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true target)", y = "Bias", color = "Estimator",
+       title = "Estimator bias across scenarios") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+# ---- 2) RMSE curves ----
+df_rmse <- demo2 %>%
+  select(setting, tau_f, all_of(xvar),
+         rmse_iv, rmse_mult, rmse_uw, rmse_wn0) %>%
+  pivot_longer(starts_with("rmse_"),
+               names_to = "method", values_to = "rmse") %>%
+  mutate(method = sub("^rmse_", "", method),
+         method = factor(method, levels = c("iv","mult","uw","wn0"),
+                         labels = c("IV","Multiplicative","Unweighted","n0-weighted")))
+
+p_rmse <- ggplot(df_rmse, aes(x = .data[[xvar]], y = rmse, color = method, group = method)) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true target)", y = "RMSE", color = "Estimator",
+       title = "Estimator RMSE across scenarios") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+# ---- 3) Coverage vs nominal 95% ----
+df_cov <- demo2 %>%
+  select(setting, tau_f, all_of(xvar), cover_iv, cover_mult) %>%
+  pivot_longer(starts_with("cover_"),
+               names_to = "method", values_to = "coverage") %>%
+  mutate(method = sub("^cover_", "", method),
+         method = factor(method, levels = c("iv","mult"),
+                         labels = c("IV","Multiplicative")))
+
+p_cover <- ggplot(df_cov, aes(x = .data[[xvar]], y = coverage, color = method, group = method)) +
+  geom_hline(yintercept = 0.95, linetype = 2) +
+  geom_line() + geom_point(size = 1.8) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true target)", y = "Coverage (95% nominal)", color = "Estimator",
+       title = "Interval coverage") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+# ---- 4) Estimated between-study variance tau^2 ----
+df_tau <- demo2 %>%
+  select(setting, tau_f, all_of(xvar), tau2_iv_mean, tau2_mult_mean) %>%
+  pivot_longer(ends_with("_mean"),
+               names_to = "method", values_to = "tau2_est") %>%
+  mutate(method = recode(method,
+                         "tau2_iv_mean"   = "IV",
+                         "tau2_mult_mean" = "Multiplicative"))
+
+p_tau <- ggplot(df_tau, aes(x = .data[[xvar]], y = tau2_est, color = method, group = method)) +
+  geom_hline(aes(yintercept = as.numeric(sub(".*= ", "", as.character(tau_f)))) , 
+             linetype = 3, colour = "grey40") +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(tau_f ~ setting, scales = "free_x") +
+  labs(x = "lnM (true target)", y = expression(hat(tau)^2~"(mean across reps)"),
+       color = "Estimator", title = expression(paste("Between-study variance ", tau^2, " (estimated vs truth)"))) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+# ---- 5) Invalid replicate rate heatmap (diagnostic) ----
+p_invalid <- ggplot(demo2,
+                    aes(x = .data[[xvar]], y = setting, fill = invalid_meta_rate)) +
+  geom_tile(color = "white") +
+  facet_wrap(~ tau_f, nrow = 1) +
+  scale_fill_gradient(limits = c(0, 1), labels = percent_format(accuracy = 1)) +
+  labs(x = "lnM (true target)", y = "Scenario", fill = "Invalid rate",
+       title = "Proportion of failed meta-analysis replicates") +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "right")
+
+# ---- Print or save ----
+p_bias
+p_rmse
+p_cover
+p_tau
+p_invalid
+
+# ggsave("bias.pdf", p_bias, width = 10, height = 6)
+# ggsave("rmse.pdf", p_rmse, width = 10, height = 6)
+# ggsave("coverage.pdf", p_cover, width = 10, height = 6)
+# ggsave("tau2.pdf", p_tau, width = 10, height = 6)
+# ggsave("invalid_rate.pdf", p_invalid, width = 10, height = 4.5)
