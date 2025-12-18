@@ -5,7 +5,8 @@
 ## This version uses SAFE_fun.R (safe_lnM_indep / safe_lnM_dep) and
 ## targets a minimum number of ACCEPTED bootstrap draws (min_kept).
 ##
-## Relative bias of variance: baseline = MC Var of PI point estimator.
+## Relative bias of variance: baseline = MC Var of SAFE-BC point estimator.
+##   (i.e., MC variance of M["safe_pt", ] after applying SAFE-BC correction)
 ########################################################################
 
 library(MASS)        # mvrnorm()
@@ -37,7 +38,6 @@ if (!exists("safe_lnM_indep") || !exists("safe_lnM_dep")) {
 safe_get <- function(S, name, default = NA) {
   if (!is.list(S)) return(default)
   if (!is.null(S[[name]])) return(S[[name]])
-  # common alternates
   alt <- switch(name,
                 pt     = c("point"),
                 var    = c("v"),
@@ -107,10 +107,6 @@ lnM_delta_dep <- function(x1, x2, s1, s2, n, rho) {
 }
 
 ## -------- 2. SAFE-BC via SAFE_fun.R ----------------------------------
-## SAFE_fun.R is expected to return list with fields like:
-##   $point/$pt, $var, $kept, $total, $status
-## We will compute BC as in your paper: 2*PI - SAFE_mean (when PI exists).
-
 safe_ind_fun <- function(x1bar, x2bar, s1, s2, n1, n2,
                          min_kept = 2000, chunk_init = 4000,
                          chunk_max = 2e6, max_draws = Inf,
@@ -187,13 +183,14 @@ one_rep <- function(mu1, mu2, sd1, sd2,
   delta_pt  <- unname(d["pt"])
   safe_raw  <- s$pt
   
+  ## SAFE-BC: 2*PI - SAFE_mean (when PI exists)
   safe_bc <- if (is.na(delta_pt)) safe_raw else 2 * delta_pt - safe_raw
   
   c(delta_pt    = delta_pt,
     delta_var   = unname(d["var"]),
     delta_cap   = unname(d["capped"]),
-    safe_pt     = safe_bc,              # store SAFE-BC as the estimator
-    safe_var    = s$var,
+    safe_pt     = safe_bc,              # SAFE-BC point estimator
+    safe_var    = s$var,                # SAFE variance estimator
     safe_kept   = s$kept,
     safe_tried  = s$tried,
     safe_ok     = as.integer(isTRUE(s$status == "ok")),
@@ -205,7 +202,6 @@ one_rep <- function(mu1, mu2, sd1, sd2,
 theta_vals <- c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
                 0.9, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3, 4, 5)
 
-## Use the same 8 indep + 4 paired designs as your earlier script
 pairs_ind <- data.frame(n1 = c(5, 10, 20, 100, 3, 6, 12, 40),
                         n2 = c(5, 10, 20, 100, 7, 14, 28, 160))
 
@@ -228,10 +224,10 @@ param_grid <- rbind(grid_ind, grid_dep)
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
 
-K_repl <- as.integer(Sys.getenv("K_REPL", "100000"))         # demo / speed - 1e5
-MIN_KEPT <- as.integer(Sys.getenv("MIN_KEPT", "100000"))    # accepted SAFE draws target - 1e5
+K_repl     <- as.integer(Sys.getenv("K_REPL", "100000"))     # demo default
+MIN_KEPT   <- as.integer(Sys.getenv("MIN_KEPT", "100000"))   # accepted SAFE draws target
 CHUNK_INIT <- as.integer(Sys.getenv("CHUNK_INIT", "5000"))
-CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000"))
+CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000000"))
 MAX_DRAWS  <- as.numeric(Sys.getenv("MAX_DRAWS", "Inf"))
 PATIENCE   <- as.integer(Sys.getenv("PATIENCE", "5"))
 
@@ -280,19 +276,24 @@ runner <- function(i) {
               patience_noaccept = PATIENCE)
     
     if (k %% inner_every == 0)
-      message(sprintf("[row %3d] replicate %4d / %d done", i, k, K_repl))
+      message(sprintf("[row %3d] replicate %7d / %d done", i, k, K_repl))
   }
   
-  ok <- is.finite(M["delta_pt", ]) & is.finite(M["delta_var", ]) & (M["delta_var", ] > 0)
-  Mok <- M[, ok, drop = FALSE]
+  ## keep a conservative 'ok' set for delta-variance validity
+  ok_d <- is.finite(M["delta_pt", ]) & is.finite(M["delta_var", ]) & (M["delta_var", ] > 0)
+  Mok  <- M[, ok_d, drop = FALSE]
   
-  Var_MC_PI <- if (sum(ok) >= 2) var(Mok["delta_pt", ]) else NA_real_
+  ## BASELINE: MC Var of SAFE-BC point estimator (computed on same Mok subset)
+  ok_safe_pt <- is.finite(Mok["safe_pt", ])
+  Var_MC_SAFEpt <- if (sum(ok_safe_pt) >= 2) var(Mok["safe_pt", ok_safe_pt]) else NA_real_
   
   ## coverage only meaningful if true_ln is finite
-  if (is.finite(true_ln) && sum(ok) > 0) {
+  if (is.finite(true_ln) && sum(ok_d) > 0) {
     cover_d <- abs(Mok["delta_pt", ] - true_ln) <= 1.96 * sqrt(Mok["delta_var", ])
+    
     ok_s <- is.finite(Mok["safe_pt", ]) & is.finite(Mok["safe_var", ]) & (Mok["safe_var", ] > 0)
     cover_s <- abs(Mok["safe_pt", ok_s] - true_ln) <= 1.96 * sqrt(Mok["safe_var", ok_s])
+    
     cover_delta <- mean(cover_d)
     cover_safe  <- if (length(cover_s)) mean(cover_s) else NA_real_
   } else {
@@ -300,23 +301,24 @@ runner <- function(i) {
     cover_safe  <- NA_real_
   }
   
-  delta_fail_prop <- mean(M["delta_fail", ])
-  safe_fail_prop  <- mean(M["safe_fail",  ])
+  delta_fail_prop <- mean(M["delta_fail", ], na.rm = TRUE)
+  safe_fail_prop  <- mean(M["safe_fail",  ], na.rm = TRUE)
   
   boot_keep  <- sum(M["safe_kept", ],  na.rm = TRUE)
   boot_tried <- sum(M["safe_tried", ], na.rm = TRUE)
   boot_accept_prop <- if (boot_tried > 0) boot_keep / boot_tried else NA_real_
   
-  delta_cap_rate <- mean(M["delta_cap", ][ok], na.rm = TRUE)
-  delta_cap_n    <- sum(M["delta_cap", ][ok] == 1, na.rm = TRUE)
+  delta_cap_rate <- mean(M["delta_cap", ][ok_d], na.rm = TRUE)
+  delta_cap_n    <- sum(M["delta_cap", ][ok_d] == 1, na.rm = TRUE)
   
   mean_var_delta <- mean(M["delta_var", ], na.rm = TRUE)
   mean_var_safe  <- mean(M["safe_var",  ], na.rm = TRUE)
   
-  relbias_delta <- if (is.finite(Var_MC_PI) && Var_MC_PI > 0)
-    100 * (mean_var_delta / Var_MC_PI - 1) else NA_real_
-  relbias_safe  <- if (is.finite(Var_MC_PI) && Var_MC_PI > 0)
-    100 * (mean_var_safe  / Var_MC_PI - 1) else NA_real_
+  ## Relative bias of variance: vs MC(SAFE-BC point)
+  relbias_delta <- if (is.finite(Var_MC_SAFEpt) && Var_MC_SAFEpt > 0)
+    100 * (mean_var_delta / Var_MC_SAFEpt - 1) else NA_real_
+  relbias_safe  <- if (is.finite(Var_MC_SAFEpt) && Var_MC_SAFEpt > 0)
+    100 * (mean_var_safe  / Var_MC_SAFEpt - 1) else NA_real_
   
   out <- data.frame(
     theta      = p$theta,
@@ -334,7 +336,7 @@ runner <- function(i) {
     mean_var_delta = mean_var_delta,
     mean_var_safe  = mean_var_safe,
     
-    Var_MC_PI      = Var_MC_PI,
+    Var_MC_SAFEpt  = Var_MC_SAFEpt,
     relbias_delta  = relbias_delta,
     relbias_safe   = relbias_safe,
     
@@ -351,8 +353,8 @@ runner <- function(i) {
     delta_cap_n    = delta_cap_n,
     maxVar         = maxVar,
     
-    boot_keep      = boot_keep,
-    boot_tried     = boot_tried,
+    boot_keep        = boot_keep,
+    boot_tried       = boot_tried,
     boot_accept_prop = boot_accept_prop,
     SAFE_ok_rate     = mean(M["safe_ok", ], na.rm = TRUE),
     
@@ -360,7 +362,7 @@ runner <- function(i) {
     mcse_bias_safe    = if (is.finite(true_ln)) mcse_mean(M["safe_pt",  ] - true_ln) else NA_real_,
     mcse_varbar_delta = mcse_mean(M["delta_var", ]),
     mcse_varbar_safe  = mcse_mean(M["safe_var", ]),
-    mcse_cover_delta  = if (is.finite(true_ln) && sum(ok) > 0) mcse_prop(cover_d) else NA_real_,
+    mcse_cover_delta  = if (is.finite(true_ln) && sum(ok_d) > 0) mcse_prop(cover_d) else NA_real_,
     mcse_cover_safe   = if (is.finite(true_ln) && exists("cover_s") && length(cover_s)) mcse_prop(cover_s) else NA_real_
   )
   
@@ -390,26 +392,8 @@ if (.Platform$OS.type == "windows") {
 
 pbapply::pboptions(pbop)
 
-## -------- 5c. COLLAPSE + SERIALISE -----------------------------------
+## -------- 5c. COLLAPSE (optionally serialize) ------------------------
 results <- do.call(rbind, results_list)
-#summary_file <- sprintf("lnM_summary_SAFEfun_%s.rds", Sys.Date())
-#saveRDS(results, summary_file)
-#message("Saved overall summary to: ", summary_file)
-
-#save_raw <- TRUE
-#if (save_raw) {
-#  dir.create("raw_runs", showWarnings = FALSE)
-#  for (i in seq_along(results_list)) {
-#    raw_i <- attr(results_list[[i]], "raw_M")
-#    if (is.null(raw_i)) next
-#    saveRDS(raw_i, sprintf("raw_runs/row_%03d.rds", i), compress = "xz")
-#  }
-#  message("Saved ", length(results_list), " raw replicate files into raw_runs/")
-#}
-
-#write.csv(results,
-#          file = sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date()),
-#          row.names = FALSE)
 
 ## -------- 6. plots (same style as your code) --------------------------
 results <- results %>%
@@ -442,10 +426,9 @@ p_bias <- ggplot(bias_df, aes(theta, bias, colour = estimator, group = estimator
   labs(x = "theta", y = "Bias (estimate - true lnM)", colour = "Estimator") +
   scale_colour_manual(values = c(delta = "firebrick", SAFE = "steelblue"),
                       labels = c(delta = "PI", SAFE = "SAFE-BC"))
-
 print(p_bias)
 
-## Relative-bias of variance plot (baseline = Var_MC_PI)
+## Relative-bias of variance plot (baseline = Var_MC_SAFEpt)
 rb_df <- bind_rows(
   results %>% select(theta, facet_label, relbias_delta) %>%
     rename(relbias = relbias_delta) %>% mutate(estimator = "delta"),
@@ -457,10 +440,9 @@ p_relbias <- ggplot(rb_df, aes(theta, relbias, colour = estimator, group = estim
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
   geom_line() +
   facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-  labs(x = "theta", y = "Relative bias of Var (%) vs MC(PI)", colour = "Estimator") +
+  labs(x = "theta", y = "Relative bias of Var (%) vs MC(SAFE-BC point)", colour = "Estimator") +
   scale_colour_manual(values = c(delta = "firebrick", SAFE = "steelblue"),
                       labels = c(delta = "PI", SAFE = "SAFE-var"))
-
 print(p_relbias)
 
 ## Coverage
