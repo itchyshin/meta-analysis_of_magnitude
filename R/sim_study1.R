@@ -395,6 +395,38 @@ pbapply::pboptions(pbop)
 ## -------- 5c. COLLAPSE (optionally serialize) ------------------------
 results <- do.call(rbind, results_list)
 
+## -------- SAVE OUTPUTS -----------------------------------------------
+
+# 1) Save overall summary (RDS + CSV)
+summary_rds <- sprintf("lnM_summary_SAFEfun_%s.rds", Sys.Date())
+saveRDS(results, summary_rds)
+message("Saved overall summary (RDS) to: ", summary_rds)
+
+summary_csv <- sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date())
+write.csv(results, file = summary_csv, row.names = FALSE)
+message("Saved overall summary (CSV) to: ", summary_csv)
+
+# 2) Optionally save raw replicate matrices (one file per param-grid row)
+save_raw <- TRUE
+
+if (isTRUE(save_raw)) {
+  raw_dir <- "raw_runs"
+  dir.create(raw_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  n_saved <- 0L
+  for (i in seq_along(results_list)) {
+    raw_i <- attr(results_list[[i]], "raw_M")
+    if (is.null(raw_i)) next
+    
+    raw_path <- file.path(raw_dir, sprintf("row_%03d.rds", i))
+    saveRDS(raw_i, raw_path, compress = "xz")
+    n_saved <- n_saved + 1L
+  }
+  
+  message("Saved ", n_saved, " raw replicate file(s) into: ", raw_dir)
+}
+
+
 ## -------- 6. plots (same style as your code) --------------------------
 results <- results %>%
   mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
