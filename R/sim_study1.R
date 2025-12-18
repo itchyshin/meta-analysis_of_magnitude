@@ -1,16 +1,15 @@
 # ================================================================
-# simulation16_parallel_SAFE.R — lnM simulations with NEW SAFE and 200+ core support
-# - Assumes SAFE_fun.R defines:
-#     safe_lnM_indep(x1bar,x2bar,s1,s2,n1,n2,
-#                    min_kept, chunk_init, chunk_max, max_draws, patience_noaccept)
-#     safe_lnM_dep  (x1bar,x2bar,s1,s2,n,r,
-#                    min_kept, chunk_init, chunk_max, max_draws, patience_noaccept)
-# - Point estimators: PI (delta plug-in) and SAFE-BC (2*PI - SAFE$point; fallback to SAFE$point if PI NA)
-# - Variance estimators: delta-method vs SAFE bootstrap
-# - Computes Eq. (16)-(20): bias, MC variances, variance relative bias (4 combos), coverage, RMSE
-# - Restores "simulation15" plots + adds SAFE acceptance and four-way rel. bias grid
-# - Fully parallel over parameter sets (216 tasks); supports 200+ cores
-# - No Greek symbols in labels (use "delta", "theta", etc.)
+# simulation16_parallel_SAFE_with_plots_FIXED.R
+# lnM simulations (PI vs SAFE-BC), parallel, with plots
+#
+# FIXES vs your current sim16:
+#  1) PI is no longer NA when MSB-MSW <= 0:
+#     we truncate the gap: Delta <- max(MSB - MSW, EPS_GAP)
+#     (sim15-style "make it defined", and we track truncation rate)
+#  2) Delta-method variance is capped at DELTA_VAR_CAP = 20 (paper/sim15)
+#     and we track cap-hit rate/n
+#  3) Relative-bias is simplified to ONE baseline:
+#     true variance = MC variance of PI point estimator (Var_MC_PI)
 # ================================================================
 
 suppressPackageStartupMessages({
@@ -22,47 +21,48 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(pbapply)
   library(parallel)
+  library(here)
 })
 
-# ------------------- Load the latest SAFE -----------------------
-SAFE_FILE <- "SAFE_fun.R"
+theme_set(theme_bw(11))
+
+# ------------------- Load SAFE ----------------------------------
+SAFE_FILE <- here("R","SAFE_fun.R")
 if (!file.exists(SAFE_FILE)) {
-  stop("SAFE_fun.R not found in working directory. Please place it next to this script.")
+  stop("SAFE_fun.R not found. Please place it at: ", SAFE_FILE)
 }
 source(SAFE_FILE)
-
 if (!exists("safe_lnM_indep") || !exists("safe_lnM_dep")) {
   stop("SAFE_fun.R must define safe_lnM_indep() and safe_lnM_dep().")
 }
 
-# Optional: prevent oversubscription from OpenBLAS/MKL
+# Optional: prevent oversubscription (OpenBLAS/MKL)
 if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
   RhpcBLASctl::blas_set_num_threads(1L)
   RhpcBLASctl::omp_set_num_threads(1L)
 }
 
-# ------------------- Global controls / knobs --------------------
+# ------------------- Global knobs --------------------------------
 RNGkind("L'Ecuyer-CMRG")
 SEED_MAIN <- 12345
 set.seed(SEED_MAIN)
 
-# Monte Carlo replicates per parameter set (increase on HPC)
 K_default <- 2000
 
-# SAFE controls (new API)
-MIN_KEPT_SAFE    <- 2000     # target usable lnM* draws per replicate
-CHUNK_INIT_SAFE  <- 4000     # starting chunk size
-CHUNK_MAX_SAFE   <- 2e6      # cap for adaptive chunk
-MAX_DRAWS_SAFE   <- Inf      # safety cap
-PATIENCE_SAFE    <- 5        # consecutive zero-accept chunks before early stop
+MIN_KEPT_SAFE    <- 2000
+CHUNK_INIT_SAFE  <- 4000
+CHUNK_MAX_SAFE   <- 2e6
+MAX_DRAWS_SAFE   <- Inf
+PATIENCE_SAFE    <- 5
 
-# Cap for delta-method variance (avoid wild outliers)
+# Paper/sim15 convention
 DELTA_VAR_CAP <- 20
 
-# Paired correlation
+# Critical sim15-style “define PI even if MSB-MSW <= 0”
+EPS_GAP <- 1e-12
+
 r_default <- 0.8
 
-# theta grid and designs
 theta_grid <- c(0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1,1.2,1.4,1.6,1.8,2,2.5,3,4,5)
 
 designs_indep <- list(
@@ -71,59 +71,97 @@ designs_indep <- list(
 )
 designs_paired_n <- c(5,10,20,100)
 
-# ------------------- Helpers -----------------------------------
-posify   <- function(x, eps = 1e-12) pmax(x, eps)
-safe_gap <- function(gap) ifelse(gap <= 0, NA_real_, gap)
+# ------------------- Helpers ------------------------------------
+posify <- function(x, eps = 1e-12) pmax(x, eps)
+
+safe_mean <- function(x) {
+  y <- x[is.finite(x)]
+  if (length(y)) mean(y) else NA_real_
+}
+safe_var <- function(x) {
+  y <- x[is.finite(x)]
+  if (length(y) >= 2) var(y) else NA_real_
+}
+safe_prop <- function(x, empty_value = NA_real_) {
+  y <- x[is.finite(x)]
+  if (length(y)) mean(y) else empty_value
+}
+safe_rmse <- function(err) {
+  y <- err[is.finite(err)]
+  if (length(y)) sqrt(mean(y^2)) else NA_real_
+}
+relbias_pct <- function(est, target) {
+  if (is.finite(est) && is.finite(target) && target > 0) 100 * (est - target) / target else NA_real_
+}
 
 # ------------------- lnM Delta-1 (independent) ------------------
-# MS Eq. (1)-(4); variance Eq. (6)
-lnM_delta1_indep <- function(x1bar, x2bar, s1, s2, n1, n2) {
+# PI point + delta-method variance with:
+#  - gap truncation to EPS_GAP (so PI is always defined)
+#  - variance cap at DELTA_VAR_CAP
+lnM_delta1_indep <- function(x1bar, x2bar, s1, s2, n1, n2,
+                             cap = DELTA_VAR_CAP, eps_gap = EPS_GAP) {
   h    <- n1 * n2 / (n1 + n2)
   MSB  <- h * (x1bar - x2bar)^2
   MSW  <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
-  Delta <- safe_gap(MSB - MSW)
-  if (is.na(Delta)) return(c(point = NA, var = NA, se = NA))
   
-  lnM <- 0.5 * (log(Delta / (2 * h)) - log(MSW))
+  Delta_raw <- MSB - MSW
+  trunc_flag <- as.numeric(is.finite(Delta_raw) && (Delta_raw <= eps_gap))
+  Delta <- if (is.finite(Delta_raw)) max(Delta_raw, eps_gap) else NA_real_
+  if (!is.finite(Delta) || !is.finite(MSW) || MSW <= 0) {
+    return(c(point = NA_real_, var = NA_real_, capped = NA_real_, trunc = NA_real_))
+  }
+  
+  lnM <- 0.5 * (log(Delta / (2*h)) - log(MSW))
   
   sigmaD2 <- s1^2 / n1 + s2^2 / n2
   delta   <- x1bar - x2bar
+  
   Var_B   <- h^2 * (2 * sigmaD2^2 + 4 * sigmaD2 * delta^2)
   Var_W   <- 2 * MSW^2 / (n1 + n2 - 2)
   
   gB   <- 0.5 / Delta
   gW   <- -0.5 * MSB / (Delta * MSW)
-  Var1 <- posify(gB^2 * Var_B + gW^2 * Var_W)
-  Var1 <- pmin(Var1, DELTA_VAR_CAP)
   
-  c(point = lnM, var = Var1, se = sqrt(Var1))
+  Var1_raw <- posify(gB^2 * Var_B + gW^2 * Var_W)
+  cap_flag <- as.numeric(is.finite(Var1_raw) && (Var1_raw > cap))
+  Var1 <- pmin(Var1_raw, cap)
+  
+  c(point = lnM, var = Var1, capped = cap_flag, trunc = trunc_flag)
 }
 
 # ------------------- lnM Delta-1 (paired) -----------------------
-# Paired forms; variance Eq. (7)
-lnM_delta1_dep <- function(x1bar, x2bar, s1, s2, n, r) {
+lnM_delta1_dep <- function(x1bar, x2bar, s1, s2, n, r,
+                           cap = DELTA_VAR_CAP, eps_gap = EPS_GAP) {
   h     <- n / 2
   MSB   <- h * (x1bar - x2bar)^2
   MSW   <- (s1^2 + s2^2) / 2
-  Delta <- safe_gap(MSB - MSW)
-  if (is.na(Delta)) return(c(point = NA, var = NA, se = NA))
+  
+  Delta_raw <- MSB - MSW
+  trunc_flag <- as.numeric(is.finite(Delta_raw) && (Delta_raw <= eps_gap))
+  Delta <- if (is.finite(Delta_raw)) max(Delta_raw, eps_gap) else NA_real_
+  if (!is.finite(Delta) || !is.finite(MSW) || MSW <= 0) {
+    return(c(point = NA_real_, var = NA_real_, capped = NA_real_, trunc = NA_real_))
+  }
   
   lnM <- 0.5 * (log(Delta / n) - log(MSW))
   
   sigmaD2 <- s1^2 + s2^2 - 2 * r * s1 * s2
   delta   <- x1bar - x2bar
+  
   Var_B   <- h^2 * (2 * sigmaD2^2 / n^2 + 4 * delta^2 * sigmaD2 / n)
   Var_W   <- (s1^4 + s2^4 + 2 * r^2 * s1^2 * s2^2) / (2 * (n - 1))
   
   gB   <- 0.5 / Delta
   gW   <- -0.5 * MSB / (Delta * MSW)
-  Var1 <- posify(gB^2 * Var_B + gW^2 * Var_W)
-  Var1 <- pmin(Var1, DELTA_VAR_CAP)
   
-  c(point = lnM, var = Var1, se = sqrt(Var1))
+  Var1_raw <- posify(gB^2 * Var_B + gW^2 * Var_W)
+  cap_flag <- as.numeric(is.finite(Var1_raw) && (Var1_raw > cap))
+  Var1 <- pmin(Var1_raw, cap)
+  
+  c(point = lnM, var = Var1, capped = cap_flag, trunc = trunc_flag)
 }
 
-# ------------------- "True" lnM (expected MS) -------------------
+# ------------------- "True" lnM (sim16 definition) --------------
 true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   h     <- n1*n2/(n1+n2)
   n0    <- 2*h
@@ -132,18 +170,16 @@ true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   Delta_true <- h * delta^2
   0.5 * (log(Delta_true / n0) - log(omega))
 }
-
-# Paired: Delta_true = (n/2)*delta^2 - r*sigma1*sigma2 ; E[MSW] = (sigma1^2+sigma2^2)/2
 true_lnM_dep <- function(mu1, mu2, sd1, sd2, n, r) {
   delta <- mu1 - mu2
   sigmaD2 <- sd1^2 + sd2^2 - 2*r*sd1*sd2
   E_MSW   <- (sd1^2 + sd2^2)/2
-  Delta_true <- (n/2)*delta^2 + (1/2)*sigmaD2 - E_MSW  # = (n/2)*delta^2 - r*sigma1*sigma2
+  Delta_true <- (n/2)*delta^2 + (1/2)*sigmaD2 - E_MSW
   n0 <- n
   0.5 * (log(Delta_true / n0) - log(E_MSW))
 }
 
-# ------------------- Summary draws (Normal theory) ---------------
+# ------------------- Summary draws (Normal theory) --------------
 draw_summaries_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
   x1bar <- rnorm(1L, mu1, sd1/sqrt(n1))
   x2bar <- rnorm(1L, mu2, sd2/sqrt(n2))
@@ -153,16 +189,16 @@ draw_summaries_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
 }
 
 draw_summaries_dep <- function(mu1, mu2, sd1, sd2, n, r) {
-  Sig <- matrix(c(sd1^2, r*sd1*sd2,
-                  r*sd1*sd2, sd2^2), 2, 2)
-  mu  <- MASS::mvrnorm(1L, mu = c(mu1, mu2), Sigma = Sig / n)
-  W   <- stats::rWishart(1L, df = n-1, Sigma = Sig)
+  Sig_pop <- matrix(c(sd1^2, r*sd1*sd2,
+                      r*sd1*sd2, sd2^2), 2, 2)
+  mu  <- MASS::mvrnorm(1L, mu = c(mu1, mu2), Sigma = Sig_pop / n)
+  W   <- stats::rWishart(1L, df = n-1, Sigma = Sig_pop)
   S11 <- W[1,1,1] / (n-1)
   S22 <- W[2,2,1] / (n-1)
   c(x1bar = mu[1], x2bar = mu[2], s1 = sqrt(S11), s2 = sqrt(S22))
 }
 
-# ------------------- One parameter set: independent --------------
+# ------------------- One parameter set: independent -------------
 run_param_indep <- function(theta, n1, n2,
                             K = K_default,
                             min_kept = MIN_KEPT_SAFE,
@@ -175,10 +211,13 @@ run_param_indep <- function(theta, n1, n2,
   mu2 <- theta
   lnM_true <- true_lnM_indep(mu1, mu2, sd1, sd2, n1, n2)
   
-  lnM_PI     <- numeric(K)
-  Var_delta  <- numeric(K)
-  lnM_BC     <- numeric(K)
-  Var_SAFE   <- numeric(K)
+  lnM_PI    <- rep(NA_real_, K)
+  Var_delta <- rep(NA_real_, K)
+  cap_hit   <- rep(NA_real_, K)
+  trunc_hit <- rep(NA_real_, K)
+  
+  lnM_BC   <- rep(NA_real_, K)
+  Var_SAFE <- rep(NA_real_, K)
   kept_vec   <- integer(K)
   total_vec  <- integer(K)
   status_vec <- character(K)
@@ -195,61 +234,115 @@ run_param_indep <- function(theta, n1, n2,
                            max_draws = max_draws,
                            patience_noaccept = patience_noaccept)
     
-    lnM_PI[k]     <- unname(d1["point"])
-    Var_delta[k]  <- unname(d1["var"])
+    lnM_PI[k]    <- unname(d1["point"])
+    Var_delta[k] <- unname(d1["var"])
+    cap_hit[k]   <- unname(d1["capped"])
+    trunc_hit[k] <- unname(d1["trunc"])
+    
     kept_vec[k]   <- SAFE$kept
     total_vec[k]  <- SAFE$total
     status_vec[k] <- SAFE$status
     
-    # SAFE-BC: 2*PI - SAFE point; fallback to SAFE point if PI undefined
-    lnM_BC[k]  <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
+    # SAFE-BC: 2*PI - SAFE(point); if PI missing, fall back to SAFE(point)
+    lnM_BC[k]   <- if (!is.finite(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
     Var_SAFE[k] <- SAFE$var
   }
   
-  Var_MC_PI <- var(lnM_PI[is.finite(lnM_PI)], na.rm = TRUE)
-  Var_MC_BC <- var(lnM_BC[is.finite(lnM_BC)], na.rm = TRUE)
+  pi_ok <- is.finite(lnM_PI) & is.finite(Var_delta) & (Var_delta > 0)
+  bc_ok <- is.finite(lnM_BC) & is.finite(Var_SAFE)  & (Var_SAFE > 0)
   
-  Var_delta_bar <- mean(Var_delta[is.finite(Var_delta)], na.rm = TRUE)
-  Var_SAFE_bar  <- mean(Var_SAFE[is.finite(Var_SAFE)],   na.rm = TRUE)
+  # "True variance" baseline = MC variance of PI point estimator
+  Var_MC_PI <- safe_var(lnM_PI[pi_ok])
   
-  rb_delta_PI <- 100 * (Var_delta_bar - Var_MC_PI) / Var_MC_PI
-  rb_delta_BC <- 100 * (Var_delta_bar - Var_MC_BC) / Var_MC_BC
-  rb_SAFE_PI  <- 100 * (Var_SAFE_bar  - Var_MC_PI) / Var_MC_PI
-  rb_SAFE_BC  <- 100 * (Var_SAFE_bar  - Var_MC_BC) / Var_MC_BC
+  Var_delta_bar <- safe_mean(Var_delta[pi_ok])
+  Var_SAFE_bar  <- safe_mean(Var_SAFE[bc_ok])
   
-  bias_PI <- mean(lnM_PI, na.rm = TRUE) - lnM_true
-  bias_BC <- mean(lnM_BC, na.rm = TRUE) - lnM_true
+  # ONE relative-bias set (baseline = Var_MC_PI)
+  rb_delta <- relbias_pct(Var_delta_bar, Var_MC_PI)
+  rb_SAFE  <- relbias_pct(Var_SAFE_bar,  Var_MC_PI)
   
-  cover_PI  <- mean(abs(lnM_PI - lnM_true) <= 1.96*sqrt(Var_delta), na.rm = TRUE)
-  cover_BC  <- mean(abs(lnM_BC - lnM_true) <= 1.96*sqrt(Var_SAFE),  na.rm = TRUE)
-  rmse_PI   <- sqrt(mean((lnM_PI - lnM_true)^2, na.rm = TRUE))
-  rmse_BC   <- sqrt(mean((lnM_BC - lnM_true)^2, na.rm = TRUE))
+  mu_PI <- safe_mean(lnM_PI[pi_ok])
+  mu_BC <- safe_mean(lnM_BC[bc_ok])
+  
+  bias_PI <- if (is.finite(mu_PI)) mu_PI - lnM_true else NA_real_
+  bias_BC <- if (is.finite(mu_BC)) mu_BC - lnM_true else NA_real_
+  
+  cover_PI <- safe_prop(abs(lnM_PI[pi_ok] - lnM_true) <= 1.96 * sqrt(Var_delta[pi_ok]))
+  cover_BC <- safe_prop(abs(lnM_BC[bc_ok] - lnM_true) <= 1.96 * sqrt(Var_SAFE[bc_ok]))
+  
+  rmse_PI <- safe_rmse(lnM_PI[pi_ok] - lnM_true)
+  rmse_BC <- safe_rmse(lnM_BC[bc_ok] - lnM_true)
+  
+  # Diagnostics
+  PI_valid_rate        <- safe_prop(pi_ok, empty_value = 0)
+  PI_gap_trunc_rate    <- safe_prop(trunc_hit[pi_ok], empty_value = 0)
+  delta_var_capped_rate<- safe_prop(cap_hit[pi_ok], empty_value = 0)
+  delta_var_capped_n   <- sum(cap_hit[pi_ok] == 1, na.rm = TRUE)
+  
+  SAFE_kept_rate <- safe_mean(kept_vec / pmax(1L, total_vec))
+  SAFE_status_ok <- safe_prop(status_vec == "ok")
+  
+  # Old-style aliases
+  delta_mean <- mu_PI
+  safe_mean_ <- mu_BC
+  delta_bias <- bias_PI
+  safe_bias  <- bias_BC
+  mean_var_delta <- Var_delta_bar
+  mean_var_safe  <- Var_SAFE_bar
+  relbias_delta  <- rb_delta
+  relbias_safe   <- rb_SAFE
+  rmse_delta     <- rmse_PI
+  rmse_safe      <- rmse_BC
+  cover_delta    <- cover_PI
+  cover_safe     <- cover_BC
   
   tibble(
-    design   = "indep",
+    design = "indep",
     n1 = n1, n2 = n2, r = NA_real_,
     theta = theta,
     lnM_true = lnM_true,
+    
+    delta_var_cap = DELTA_VAR_CAP,
+    EPS_GAP = EPS_GAP,
+    PI_gap_trunc_rate = PI_gap_trunc_rate,
+    delta_var_capped_rate = delta_var_capped_rate,
+    delta_var_capped_n    = delta_var_capped_n,
+    
     bias_PI = bias_PI,
     bias_BC = bias_BC,
     Var_MC_PI = Var_MC_PI,
-    Var_MC_BC = Var_MC_BC,
     Var_delta_bar = Var_delta_bar,
     Var_SAFE_bar  = Var_SAFE_bar,
-    rb_delta_PI = rb_delta_PI,
-    rb_delta_BC = rb_delta_BC,
-    rb_SAFE_PI  = rb_SAFE_PI,
-    rb_SAFE_BC  = rb_SAFE_BC,
+    
+    rb_delta = rb_delta,
+    rb_SAFE  = rb_SAFE,
+    
     cover_PI = cover_PI,
     cover_BC = cover_BC,
     rmse_PI  = rmse_PI,
     rmse_BC  = rmse_BC,
-    SAFE_kept_rate = mean(kept_vec / pmax(1L, total_vec), na.rm = TRUE),
-    SAFE_status_ok = mean(status_vec == "ok", na.rm = TRUE)
+    
+    PI_valid_rate = PI_valid_rate,
+    SAFE_kept_rate = SAFE_kept_rate,
+    SAFE_status_ok = SAFE_status_ok,
+    
+    # old-style aliases
+    delta_mean = delta_mean,
+    safe_mean  = safe_mean_,
+    delta_bias = delta_bias,
+    safe_bias  = safe_bias,
+    mean_var_delta = mean_var_delta,
+    mean_var_safe  = mean_var_safe,
+    relbias_delta  = relbias_delta,
+    relbias_safe   = relbias_safe,
+    rmse_delta     = rmse_delta,
+    rmse_safe      = rmse_safe,
+    cover_delta    = cover_delta,
+    cover_safe     = cover_safe
   )
 }
 
-# ------------------- One parameter set: paired -------------------
+# ------------------- One parameter set: paired ------------------
 run_param_dep <- function(theta, n,
                           r = r_default,
                           K = K_default,
@@ -263,10 +356,13 @@ run_param_dep <- function(theta, n,
   mu2 <- theta
   lnM_true <- true_lnM_dep(mu1, mu2, sd1, sd2, n, r)
   
-  lnM_PI     <- numeric(K)
-  Var_delta  <- numeric(K)
-  lnM_BC     <- numeric(K)
-  Var_SAFE   <- numeric(K)
+  lnM_PI    <- rep(NA_real_, K)
+  Var_delta <- rep(NA_real_, K)
+  cap_hit   <- rep(NA_real_, K)
+  trunc_hit <- rep(NA_real_, K)
+  
+  lnM_BC   <- rep(NA_real_, K)
+  Var_SAFE <- rep(NA_real_, K)
   kept_vec   <- integer(K)
   total_vec  <- integer(K)
   status_vec <- character(K)
@@ -283,71 +379,124 @@ run_param_dep <- function(theta, n,
                          max_draws = max_draws,
                          patience_noaccept = patience_noaccept)
     
-    lnM_PI[k]     <- unname(d1["point"])
-    Var_delta[k]  <- unname(d1["var"])
+    lnM_PI[k]    <- unname(d1["point"])
+    Var_delta[k] <- unname(d1["var"])
+    cap_hit[k]   <- unname(d1["capped"])
+    trunc_hit[k] <- unname(d1["trunc"])
+    
     kept_vec[k]   <- SAFE$kept
     total_vec[k]  <- SAFE$total
     status_vec[k] <- SAFE$status
     
-    lnM_BC[k]  <- if (is.na(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
+    lnM_BC[k]   <- if (!is.finite(lnM_PI[k])) SAFE$point else 2*lnM_PI[k] - SAFE$point
     Var_SAFE[k] <- SAFE$var
   }
   
-  Var_MC_PI <- var(lnM_PI[is.finite(lnM_PI)], na.rm = TRUE)
-  Var_MC_BC <- var(lnM_BC[is.finite(lnM_BC)], na.rm = TRUE)
+  pi_ok <- is.finite(lnM_PI) & is.finite(Var_delta) & (Var_delta > 0)
+  bc_ok <- is.finite(lnM_BC) & is.finite(Var_SAFE)  & (Var_SAFE > 0)
   
-  Var_delta_bar <- mean(Var_delta[is.finite(Var_delta)], na.rm = TRUE)
-  Var_SAFE_bar  <- mean(Var_SAFE[is.finite(Var_SAFE)],   na.rm = TRUE)
+  Var_MC_PI <- safe_var(lnM_PI[pi_ok])
   
-  rb_delta_PI <- 100 * (Var_delta_bar - Var_MC_PI) / Var_MC_PI
-  rb_delta_BC <- 100 * (Var_delta_bar - Var_MC_BC) / Var_MC_BC
-  rb_SAFE_PI  <- 100 * (Var_SAFE_bar  - Var_MC_PI) / Var_MC_PI
-  rb_SAFE_BC  <- 100 * (Var_SAFE_bar  - Var_MC_BC) / Var_MC_BC
+  Var_delta_bar <- safe_mean(Var_delta[pi_ok])
+  Var_SAFE_bar  <- safe_mean(Var_SAFE[bc_ok])
   
-  bias_PI <- mean(lnM_PI, na.rm = TRUE) - lnM_true
-  bias_BC <- mean(lnM_BC, na.rm = TRUE) - lnM_true
+  rb_delta <- relbias_pct(Var_delta_bar, Var_MC_PI)
+  rb_SAFE  <- relbias_pct(Var_SAFE_bar,  Var_MC_PI)
   
-  cover_PI  <- mean(abs(lnM_PI - lnM_true) <= 1.96*sqrt(Var_delta), na.rm = TRUE)
-  cover_BC  <- mean(abs(lnM_BC - lnM_true) <= 1.96*sqrt(Var_SAFE),  na.rm = TRUE)
-  rmse_PI   <- sqrt(mean((lnM_PI - lnM_true)^2, na.rm = TRUE))
-  rmse_BC   <- sqrt(mean((lnM_BC - lnM_true)^2, na.rm = TRUE))
+  mu_PI <- safe_mean(lnM_PI[pi_ok])
+  mu_BC <- safe_mean(lnM_BC[bc_ok])
+  
+  bias_PI <- if (is.finite(mu_PI)) mu_PI - lnM_true else NA_real_
+  bias_BC <- if (is.finite(mu_BC)) mu_BC - lnM_true else NA_real_
+  
+  cover_PI <- safe_prop(abs(lnM_PI[pi_ok] - lnM_true) <= 1.96 * sqrt(Var_delta[pi_ok]))
+  cover_BC <- safe_prop(abs(lnM_BC[bc_ok] - lnM_true) <= 1.96 * sqrt(Var_SAFE[bc_ok]))
+  
+  rmse_PI <- safe_rmse(lnM_PI[pi_ok] - lnM_true)
+  rmse_BC <- safe_rmse(lnM_BC[bc_ok] - lnM_true)
+  
+  PI_valid_rate         <- safe_prop(pi_ok, empty_value = 0)
+  PI_gap_trunc_rate     <- safe_prop(trunc_hit[pi_ok], empty_value = 0)
+  delta_var_capped_rate <- safe_prop(cap_hit[pi_ok], empty_value = 0)
+  delta_var_capped_n    <- sum(cap_hit[pi_ok] == 1, na.rm = TRUE)
+  
+  SAFE_kept_rate <- safe_mean(kept_vec / pmax(1L, total_vec))
+  SAFE_status_ok <- safe_prop(status_vec == "ok")
+  
+  # old-style
+  delta_mean <- mu_PI
+  safe_mean_ <- mu_BC
+  delta_bias <- bias_PI
+  safe_bias  <- bias_BC
+  mean_var_delta <- Var_delta_bar
+  mean_var_safe  <- Var_SAFE_bar
+  relbias_delta  <- rb_delta
+  relbias_safe   <- rb_SAFE
+  rmse_delta     <- rmse_PI
+  rmse_safe      <- rmse_BC
+  cover_delta    <- cover_PI
+  cover_safe     <- cover_BC
   
   tibble(
-    design   = "paired",
+    design = "paired",
     n1 = n, n2 = n, r = r,
     theta = theta,
     lnM_true = lnM_true,
+    
+    delta_var_cap = DELTA_VAR_CAP,
+    EPS_GAP = EPS_GAP,
+    PI_gap_trunc_rate = PI_gap_trunc_rate,
+    delta_var_capped_rate = delta_var_capped_rate,
+    delta_var_capped_n    = delta_var_capped_n,
+    
     bias_PI = bias_PI,
     bias_BC = bias_BC,
     Var_MC_PI = Var_MC_PI,
-    Var_MC_BC = Var_MC_BC,
     Var_delta_bar = Var_delta_bar,
     Var_SAFE_bar  = Var_SAFE_bar,
-    rb_delta_PI = rb_delta_PI,
-    rb_delta_BC = rb_delta_BC,
-    rb_SAFE_PI  = rb_SAFE_PI,
-    rb_SAFE_BC  = rb_SAFE_BC,
+    
+    rb_delta = rb_delta,
+    rb_SAFE  = rb_SAFE,
+    
     cover_PI = cover_PI,
     cover_BC = cover_BC,
     rmse_PI  = rmse_PI,
     rmse_BC  = rmse_BC,
-    SAFE_kept_rate = mean(kept_vec / pmax(1L, total_vec), na.rm = TRUE),
-    SAFE_status_ok = mean(status_vec == "ok", na.rm = TRUE)
+    
+    PI_valid_rate = PI_valid_rate,
+    SAFE_kept_rate = SAFE_kept_rate,
+    SAFE_status_ok = SAFE_status_ok,
+    
+    # old-style aliases
+    delta_mean = delta_mean,
+    safe_mean  = safe_mean_,
+    delta_bias = delta_bias,
+    safe_bias  = safe_bias,
+    mean_var_delta = mean_var_delta,
+    mean_var_safe  = mean_var_safe,
+    relbias_delta  = relbias_delta,
+    relbias_safe   = relbias_safe,
+    rmse_delta     = rmse_delta,
+    rmse_safe      = rmse_safe,
+    cover_delta    = cover_delta,
+    cover_safe     = cover_safe
   )
 }
 
-# ------------------- Parameter grid builders --------------------
+# ------------------- Parameter grid -----------------------------
 build_param_grid <- function() {
   indep_tbl <- tidyr::expand_grid(theta = theta_grid, dn = designs_indep) %>%
     mutate(n1 = purrr::map_int(dn, 1L), n2 = purrr::map_int(dn, 2L)) %>%
     select(-dn) %>%
     mutate(design = "indep")
+  
   paired_tbl <- tidyr::expand_grid(theta = theta_grid, n = designs_paired_n) %>%
     transmute(theta = theta, n1 = n, n2 = n, design = "paired")
+  
   bind_rows(indep_tbl, paired_tbl)
 }
 
-# ------------------- Parallel driver (200+ cores) ----------------
+# ------------------- Parallel driver ----------------------------
 run_full_simulation_parallel <- function(
     K = K_default,
     min_kept = MIN_KEPT_SAFE,
@@ -356,9 +505,9 @@ run_full_simulation_parallel <- function(
     max_draws = MAX_DRAWS_SAFE,
     patience_noaccept = PATIENCE_SAFE,
     r = r_default,
-    n_cores = NULL,                          # set to 200+ as needed
-    cluster_type = c("auto","psock","fork"), # "fork" only on Unix
-    export_SAFE_fun = TRUE,                  # source SAFE_fun.R on workers
+    n_cores = NULL,
+    cluster_type = c("auto","psock","fork"),
+    export_SAFE_fun = TRUE,
     safe_fun_path = SAFE_FILE
 ) {
   pg <- build_param_grid()
@@ -371,7 +520,6 @@ run_full_simulation_parallel <- function(
   n_cores <- min(n_cores, n_tasks)
   cluster_type <- match.arg(cluster_type)
   
-  # Worker function for one row
   .run_one_param <- function(row) {
     if (row$design == "indep") {
       run_param_indep(theta = row$theta, n1 = row$n1, n2 = row$n2,
@@ -394,7 +542,7 @@ run_full_simulation_parallel <- function(
   
   if (n_cores <= 1) {
     message("Running serially...")
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]))
+    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i, ]))
     return(dplyr::bind_rows(res_list))
   }
   
@@ -405,7 +553,7 @@ run_full_simulation_parallel <- function(
   if (use_fork) {
     options(mc.cores = n_cores)
     if (export_SAFE_fun && file.exists(safe_fun_path)) source(safe_fun_path)
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]), cl = n_cores)
+    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i, ]), cl = n_cores)
   } else if (use_psock) {
     cl <- parallel::makeCluster(n_cores, type = "PSOCK")
     on.exit(parallel::stopCluster(cl), add = TRUE)
@@ -422,27 +570,24 @@ run_full_simulation_parallel <- function(
       parallel::clusterEvalQ(cl, source(safe_fun_path))
     }
     
-    # Export needed symbols
     parallel::clusterExport(
       cl,
       varlist = c(
-        # controls
         "K","min_kept","chunk_init","chunk_max","max_draws","patience_noaccept","r",
-        # data/params
+        "DELTA_VAR_CAP","EPS_GAP",
         "pg","theta_grid","designs_indep","designs_paired_n",
-        # helpers & estimators
-        "posify","safe_gap",
+        "posify",
+        "safe_mean","safe_var","safe_prop","safe_rmse","relbias_pct",
         "lnM_delta1_indep","lnM_delta1_dep",
         "true_lnM_indep","true_lnM_dep",
         "draw_summaries_indep","draw_summaries_dep",
         "run_param_indep","run_param_dep",
-        # RNG seed to allow per-worker reproducibility if needed inside
         "SEED_MAIN"
       ),
       envir = environment()
     )
     
-    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i,]), cl = cl)
+    res_list <- pbapply::pblapply(seq_len(n_tasks), function(i) .run_one_param(pg[i, ]), cl = cl)
   } else {
     stop("Unknown cluster_type")
   }
@@ -450,7 +595,7 @@ run_full_simulation_parallel <- function(
   dplyr::bind_rows(res_list)
 }
 
-# ------------------- Plot helpers (simulation15 + extras) --------
+# ------------------- Plot helpers -------------------------------
 facet_ordering <- function(results) {
   results %>%
     mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2)) %>%
@@ -469,40 +614,33 @@ facet_ordering <- function(results) {
 
 plot_bias <- function(results) {
   df <- bind_rows(
-    results %>% select(theta, facet_label, bias_PI) %>%
-      rename(bias = bias_PI) %>% mutate(estimator = "PI"),
-    results %>% select(theta, facet_label, bias_BC) %>%
-      rename(bias = bias_BC) %>% mutate(estimator = "SAFE-BC")
+    results %>% transmute(theta, facet_label, estimator = "PI",      bias = bias_PI),
+    results %>% transmute(theta, facet_label, estimator = "SAFE-BC", bias = bias_BC)
   )
   ggplot(df, aes(theta, bias, colour = estimator, group = estimator)) +
     geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
     labs(x = "theta", y = "Bias (estimate - true lnM)", colour = NULL) +
-    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
-    theme_bw(11)
+    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue"))
 }
 
-plot_relbias_15 <- function(results) {
+plot_relbias_simple <- function(results) {
   df <- bind_rows(
-    results %>% select(theta, facet_label, rb_delta_BC) %>%
-      rename(relbias = rb_delta_BC) %>% mutate(estimator = "delta-var vs MC(BC)"),
-    results %>% select(theta, facet_label, rb_SAFE_BC) %>%
-      rename(relbias = rb_SAFE_BC)  %>% mutate(estimator = "SAFE-var vs MC(BC)")
+    results %>% transmute(theta, facet_label, estimator = "delta-var", relbias = rb_delta),
+    results %>% transmute(theta, facet_label, estimator = "SAFE-var",  relbias = rb_SAFE)
   )
   ggplot(df, aes(theta, relbias, colour = estimator, group = estimator)) +
     geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Relative bias of variance (%)", colour = NULL) +
-    scale_colour_manual(values = c("delta-var vs MC(BC)" = "firebrick",
-                                   "SAFE-var vs MC(BC)" = "steelblue")) +
-    theme_bw(11)
+    labs(x = "theta", y = "Relative bias of variance (%) vs MC(PI)", colour = NULL) +
+    scale_colour_manual(values = c("delta-var" = "firebrick", "SAFE-var" = "steelblue"))
 }
 
 plot_coverage <- function(results) {
   df <- bind_rows(
-    results %>% transmute(theta, facet_label, estimator = "PI", cover = cover_PI),
+    results %>% transmute(theta, facet_label, estimator = "PI",      cover = cover_PI),
     results %>% transmute(theta, facet_label, estimator = "SAFE-BC", cover = cover_BC)
   )
   ggplot(df, aes(theta, cover, colour = estimator, group = estimator)) +
@@ -510,8 +648,7 @@ plot_coverage <- function(results) {
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
     labs(x = "theta", y = "Empirical coverage", colour = NULL) +
-    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
-    theme_bw(11)
+    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue"))
 }
 
 plot_rmse <- function(results) {
@@ -522,45 +659,40 @@ plot_rmse <- function(results) {
   ggplot(df, aes(theta, rmse, colour = estimator, group = estimator)) +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue")) +
     labs(x = "theta", y = "RMSE (ln Mhat - ln M)", colour = NULL) +
-    theme_bw(11)
+    scale_colour_manual(values = c("PI" = "firebrick", "SAFE-BC" = "steelblue"))
+}
+
+plot_gap_trunc <- function(results) {
+  ggplot(results, aes(theta, PI_gap_trunc_rate)) +
+    geom_line() +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
+    labs(x = "theta", y = sprintf("Gap truncation rate (Delta<=%g)", EPS_GAP))
+}
+
+plot_delta_cap <- function(results) {
+  ggplot(results, aes(theta, delta_var_capped_rate)) +
+    geom_line() +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
+    labs(x = "theta", y = sprintf("Delta-var cap-hit rate (cap=%g)", DELTA_VAR_CAP))
 }
 
 plot_safe_accept <- function(results) {
   ggplot(results, aes(theta, SAFE_kept_rate)) +
     geom_line() +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "SAFE acceptance rate (kept/total)") +
-    theme_bw(11)
+    labs(x = "theta", y = "SAFE acceptance rate (kept/total)")
 }
 
-plot_relbias_grid <- function(results) {
-  df <- bind_rows(
-    results %>% transmute(theta, facet_label, estimator = "delta-var", baseline = "MC(PI)", relbias = rb_delta_PI),
-    results %>% transmute(theta, facet_label, estimator = "delta-var", baseline = "MC(BC)", relbias = rb_delta_BC),
-    results %>% transmute(theta, facet_label, estimator = "SAFE-var",  baseline = "MC(PI)", relbias = rb_SAFE_PI),
-    results %>% transmute(theta, facet_label, estimator = "SAFE-var",  baseline = "MC(BC)", relbias = rb_SAFE_BC)
-  )
-  ggplot(df, aes(theta, relbias, group = interaction(estimator, baseline),
-                 colour = estimator, linetype = baseline)) +
-    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-    geom_line() +
-    facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-    labs(x = "theta", y = "Relative bias of variance (%)",
-         colour = "Estimator", linetype = "Baseline") +
-    scale_colour_manual(values = c("delta-var" = "firebrick", "SAFE-var" = "steelblue")) +
-    theme_bw(11)
-}
-
-# ------------------- Main: run + save + plot ---------------------
+# ------------------- Main ---------------------------------------
 if (sys.nframe() == 0) {
-  message("Running a small parallel demo; increase K and MIN_KEPT_SAFE for HPC-scale runs.")
+  message("Running a parallel demo; increase K and MIN_KEPT_SAFE for HPC-scale runs.")
+  
   K_demo   <- as.integer(Sys.getenv("K_DEMO",    "200"))
   MIN_demo <- as.integer(Sys.getenv("MIN_KEPT",  "2000"))
   CH_demo  <- as.integer(Sys.getenv("CHUNK_INIT","2000"))
   N_CORES  <- suppressWarnings(as.integer(Sys.getenv("N_CORES", "")))
-  if (is.na(N_CORES) || N_CORES <= 0) N_CORES <- min( parallel::detectCores(), 216L )
+  if (is.na(N_CORES) || N_CORES <= 0) N_CORES <- min(parallel::detectCores(), 216L)
   
   results <- run_full_simulation_parallel(
     K = K_demo,
@@ -576,39 +708,48 @@ if (sys.nframe() == 0) {
     safe_fun_path = SAFE_FILE
   )
   
-  # Save
-  stamp <- format(Sys.Date(), "%Y-%m-%d")
-  saveRDS(results, file = sprintf("lnM_sim16_SAFE_%s.rds", stamp))
-  write.csv(results, file = sprintf("lnM_sim16_SAFE_%s.csv", stamp), row.names = FALSE)
-  
-  # Facet ordering like simulation15
   results <- facet_ordering(results)
   
-  # Plots from simulation15
-  p_bias     <- plot_bias(results);        print(p_bias)
-  p_relbias  <- plot_relbias_15(results);  print(p_relbias)
-  p_cover    <- plot_coverage(results);    print(p_cover)
-  p_rmse     <- plot_rmse(results);        print(p_rmse)
+  stamp <- format(Sys.Date(), "%Y-%m-%d")
+  saveRDS(results, file = sprintf("lnM_sim16_SAFE_FIXED_%s.rds", stamp))
+  write.csv(results, file = sprintf("lnM_sim16_SAFE_FIXED_%s.csv", stamp), row.names = FALSE)
   
-  # Extras
-  p_accept   <- plot_safe_accept(results); print(p_accept)
-  p_grid4    <- plot_relbias_grid(results); print(p_grid4)
+  dir.create("plots", showWarnings = FALSE)
   
-  # Quick roll-ups
-  message(sprintf("Mean |bias| PI: %.4f",  mean(abs(results$bias_PI), na.rm = TRUE)))
+  p_bias    <- plot_bias(results)
+  p_relb    <- plot_relbias_simple(results)
+  p_cov     <- plot_coverage(results)
+  p_rmse    <- plot_rmse(results)
+  p_trunc   <- plot_gap_trunc(results)
+  p_cap     <- plot_delta_cap(results)
+  p_accept  <- plot_safe_accept(results)
+  
+  print(p_bias); print(p_relb); print(p_cov); print(p_rmse)
+  print(p_trunc); print(p_cap); print(p_accept)
+  
+  ggsave(sprintf("plots/lnM_bias_%s.pdf", stamp),        p_bias,   width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_relbias_%s.pdf", stamp),     p_relb,   width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_cover_%s.pdf", stamp),       p_cov,    width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_rmse_%s.pdf", stamp),        p_rmse,   width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_gaptrunc_%s.pdf", stamp),    p_trunc,  width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_deltacap_%s.pdf", stamp),    p_cap,    width = 11, height = 8.5)
+  ggsave(sprintf("plots/lnM_safeaccept_%s.pdf", stamp),  p_accept, width = 11, height = 8.5)
+  
+  message(sprintf("Delta-var cap used: %g", DELTA_VAR_CAP))
+  message(sprintf("Gap truncation EPS_GAP: %g", EPS_GAP))
+  message(sprintf("Mean |bias| PI: %.4f",      mean(abs(results$bias_PI), na.rm = TRUE)))
   message(sprintf("Mean |bias| SAFE-BC: %.4f", mean(abs(results$bias_BC), na.rm = TRUE)))
-  message(sprintf("Mean |relbias| delta-var vs MC(BC): %.2f%%",
-                  mean(abs(results$rb_delta_BC), na.rm = TRUE)))
-  message(sprintf("Mean |relbias| SAFE-var vs MC(BC): %.2f%%",
-                  mean(abs(results$rb_SAFE_BC),  na.rm = TRUE)))
+  message(sprintf("Mean |rb_delta| (vs MC(PI)): %.2f%%", mean(abs(results$rb_delta), na.rm = TRUE)))
+  message(sprintf("Mean |rb_SAFE|  (vs MC(PI)): %.2f%%", mean(abs(results$rb_SAFE),  na.rm = TRUE)))
+  message(sprintf("Mean PI_valid_rate: %.3f", mean(results$PI_valid_rate, na.rm = TRUE)))
+  message(sprintf("Mean PI_gap_trunc_rate: %.3f", mean(results$PI_gap_trunc_rate, na.rm = TRUE)))
+  message(sprintf("Mean delta_var_capped_rate: %.3f", mean(results$delta_var_capped_rate, na.rm = TRUE)))
+  message(sprintf("Mean SAFE_kept_rate: %.3f; SAFE ok: %.3f",
+                  mean(results$SAFE_kept_rate, na.rm = TRUE),
+                  mean(results$SAFE_status_ok, na.rm = TRUE)))
 }
 
 # ------------------- How to run (examples) -----------------------
-# 1) Single-node, Linux/macOS, 200 cores (fork):
-#    N_CORES=200 K_DEMO=2000 MIN_KEPT=2000 CHUNK_INIT=4000 Rscript simulation16_parallel_SAFE.R
-#
-# 2) Windows or multi-node PSOCK:
-#    N_CORES=200 Rscript simulation16_parallel_SAFE.R
-#
-# 3) Increase accuracy:
-#    K_DEMO=10000 MIN_KEPT=100000 CHUNK_INIT=4000 N_CORES=216 Rscript simulation16_parallel_SAFE.R
+# 1) Linux/macOS (fork):  N_CORES=48 K_DEMO=2000 MIN_KEPT=2000 CHUNK_INIT=4000 Rscript simulation16_parallel_SAFE_with_plots_FIXED.R
+# 2) Windows (PSOCK):     N_CORES=48 K_DEMO=2000 MIN_KEPT=2000 CHUNK_INIT=4000 Rscript simulation16_parallel_SAFE_with_plots_FIXED.R
+# 3) Accuracy/HPC:        N_CORES=200 K_DEMO=10000 MIN_KEPT=100000 CHUNK_INIT=4000 Rscript simulation16_parallel_SAFE_with_plots_FIXED.R

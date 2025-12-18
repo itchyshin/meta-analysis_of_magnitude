@@ -349,7 +349,7 @@ runner <- function(i) {
 }
 
 ## -------- 5a. PARALLEL outer loop ------------------------------------
-n_cores_use <- max(1L, detectCores() - 200)
+n_cores_use <- max(1L, detectCores() - 4)
 pbop <- pbapply::pboptions(type = "txt")
 
 if (.Platform$OS.type == "windows") {

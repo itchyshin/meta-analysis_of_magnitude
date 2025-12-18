@@ -1,23 +1,21 @@
 # ===================================================================
-# SAFE-only meta-analysis simulation (Inverse-Variance only), K fixed
-#   • K fixed per scenario; n1, n2 vary per study around n_mean (min 3)
-#   • Per-study effect: lnM via SAFE; point = SAFE-BC (2*Delta1 − SAFE_mean)
-#   • Per-study var:    SAFE variance only
-#   • Estimator (metafor::rma.mv): IV with V = diag(vi), random = ~1|ID
-#   • δμ calibrated to hit lnM_target GIVEN τδ (at mean n)
-#   • 95% CIs via predict(fit) (fallback: confint() → ±1.96*SE)
-#   • Coverage uses those CIs
-#   • MC uncertainty: MCSE for all reported metrics + 95% MC intervals
-#   • Reduced grid demo: K ∈ {20, 50}; lnM_target ∈ {−1.0, −0.7, −0.4, 0.0, 0.4};
-#                         τδ ∈ {0, 0.2}; n̄ ∈ {10, 20, 30, 50, 100}; n-dist = nbinom(size=8)
-#   • Run:
-#       Sys.setenv(N_WORKERS = "16"); source("SAFE_IV_only_MC.R")
+# SAFE-only meta-analysis simulation (IV Only), K fixed
+#   - K fixed per scenario; n1,n2 vary per study around n_mean (min 3)
+#   - Per-study effect: lnM via SAFE; point = SAFE-BC (2*Delta1 - SAFE_mean)
+#   - Per-study var:    SAFE variance only
+#   - Estimator (metafor::rma.mv):
+#       (A) Inverse-variance (IV):         V = diag(vi)
+#   - δμ is calibrated so that true lnM (given τδ) ≈ lnM_target at mean n
+#   - Coverage computed from these CIs
+#   - Run with 16 cores:
+#       Sys.setenv(N_WORKERS = "16"); source("fixedK_varyN_SAFE_IV_ONLY.R")
 # ===================================================================
 
 rm(list = ls()); gc()
 
 suppressPackageStartupMessages({
   library(metafor)
+  library(MASS)
   library(tibble)
   library(dplyr)
   library(purrr)
@@ -55,11 +53,13 @@ set_parallel_plan <- function(n_workers = NULL, backend = c("multisession","mult
 
 .FOPTS <- furrr_options(
   seed = TRUE,
-  packages = c("metafor","tibble","dplyr","purrr"),
+  packages = c("metafor","MASS","tibble","dplyr","purrr"),
   scheduling = 2
 )
 
 # --------------------- SAFE sampler (stand-alone) -------------------
+# Accept-reject over summary stats for two-group independent design.
+# Returns mean and variance of lnM across accepted draws (SAFE).
 .safe_sampler_indep <- function(x1bar, x2bar, s1, s2, n1, n2,
                                 min_kept = 2000, chunk_init = 4000,
                                 chunk_max = 2e6, max_draws = Inf,
@@ -108,6 +108,7 @@ set_parallel_plan <- function(n_workers = NULL, backend = c("multisession","mult
        status = if (kept >= min_kept) "ok" else "stopped_early")
 }
 
+# Wrapper used below
 safe_call_indep <- .safe_sampler_indep
 
 # ----------------- Delta-1 (for SAFE-BC point) ----------------------
@@ -132,45 +133,35 @@ draw_summaries_indep <- function(mu1, mu2, sd1, sd2, n1, n2) {
 
 # --------------- Truth & calibration helpers ------------------------
 true_lnM_indep <- function(mu1, mu2, sd1, sd2, n1, n2, tau_delta = 0) {
-  h          <- n1 * n2 / (n1 + n2)
-  n0         <- 2 * h
-  delta_mean <- mu1 - mu2
-  omega      <- ((n1 - 1) * sd1^2 + (n2 - 1) * sd2^2) / (n1 + n2 - 2)
-  Delta_true <- h * (delta_mean^2 + tau_delta^2)
+  # Large-sample expectation of lnM given mean difference (mu1 - mu2)
+  # and between-study SD on the delta-scale (tau_delta).
+  h           <- n1 * n2 / (n1 + n2)
+  n0          <- 2 * h
+  delta_mean  <- mu1 - mu2
+  omega       <- ((n1 - 1) * sd1^2 + (n2 - 1) * sd2^2) / (n1 + n2 - 2)
+  Delta_true  <- h * (delta_mean^2 + tau_delta^2)
   0.5 * (log(Delta_true / n0) - log(omega))
 }
 
-# ---- Calibrate delta_mu to hit lnM_target given tau_delta (mean n) --
-# • Closed form when tau_delta == 0 (avoids log(0) baseline)
-# • Robust root-finding for tau_delta > 0 without evaluating at 0
-delta_mu_from_target <- function(lnM_target, tau_delta,
-                                 n1_bar, n2_bar, sd1 = 1, sd2 = 1,
+# Calibrate delta_mu so that true lnM (given tau_delta) hits lnM_target
+delta_mu_from_target <- function(lnM_target, tau_delta, n1_bar, n2_bar, sd1=1, sd2=1,
                                  upper_init = 10, max_upper = 1e4) {
-  # pooled within-group variance at the mean n
-  omega <- ((n1_bar - 1) * sd1^2 + (n2_bar - 1) * sd2^2) / (n1_bar + n2_bar - 2)
-  # harmonic sample size factor
-  h <- n1_bar * n2_bar / (n1_bar + n2_bar)
-  n0 <- 2 * h
-  
-  if (isTRUE(all.equal(tau_delta, 0))) {
-    # Solve lnM = 0.5*(log((h*d^2)/n0) - log(omega))  for d
-    # ⇒ d = sqrt(2*omega) * exp(lnM)
-    return(sqrt(2 * omega) * exp(lnM_target))
+  f <- function(dmu) {
+    true_lnM_indep(mu1 = 0, mu2 = dmu, sd1 = sd1, sd2 = sd2,
+                   n1 = n1_bar, n2 = n2_bar, tau_delta = tau_delta) - lnM_target
   }
   
-  f <- function(dmu) 0.5 * (log((h * (dmu^2 + tau_delta^2)) / n0) - log(omega)) - lnM_target
+  # FIX: Start at a small epsilon instead of 0 to avoid log(0) when tau=0
+  eps <- 1e-8
+  f0 <- f(eps)
   
-  low <- 1e-12
-  f_low <- f(low)
-  if (!is.finite(f_low)) stop("Calibration failed: non-finite objective at lower bound.")
-  
-  if (f_low >= 0) return(0)  # target ≤ minimum achievable ⇒ dmu = 0
+  if (!is.finite(f0)) stop("Non-finite baseline in delta_mu_from_target() even with epsilon.")
+  if (f0 >= 0) return(eps)  # target ≤ attainable minimum
   
   up <- upper_init
   while (f(up) < 0 && up < max_upper) up <- up * 2
-  if (f(up) < 0) stop("Target lnM too large at given tau_delta; increase max_upper.")
-  
-  uniroot(f, c(low, up))$root
+  if (f(up) < 0) stop("Target lnM too large; increase max_upper.")
+  uniroot(f, c(eps, up))$root
 }
 
 # --------------------- n drawing utilities --------------------------
@@ -184,7 +175,19 @@ draw_n_vec <- function(K, n_mean, dist = c("poisson","nbinom"), nb_size = 10L, n
   pmax(n_min, as.integer(n))
 }
 
-# ------------------- One meta-analysis replicate (IV) ----------------
+# ----------------------- CI helper (robust) -------------------------
+ci_95_from_fit <- function(fit) {
+  b  <- as.numeric(fit$b[1])
+  se <- as.numeric(sqrt(vcov(fit)[1,1]))
+  df <- NA_real_
+  if (!is.null(fit$ddf)) {
+    df <- suppressWarnings(as.numeric(fit$ddf[1]))
+  }
+  crit <- if (is.finite(df)) qt(0.975, df) else qnorm(0.975)
+  c(lb = b - crit*se, ub = b + crit*se)
+}
+
+# ------------------- One meta-analysis replicate --------------------
 fit_meta_once_fixedK <- function(K_fixed,
                                  n1_mean, n2_mean,
                                  n_dist = c("poisson","nbinom"),
@@ -207,6 +210,7 @@ fit_meta_once_fixedK <- function(K_fixed,
   
   yi  <- numeric(K_fixed)
   vi  <- numeric(K_fixed)
+  n0k <- 2 * n1_k * n2_k / (n1_k + n2_k)
   
   for (k in seq_len(K_fixed)) {
     sm <- draw_summaries_indep(mu1, mu2_k[k], sd1, sd2, n1_k[k], n2_k[k])
@@ -217,6 +221,7 @@ fit_meta_once_fixedK <- function(K_fixed,
       chunk_max = chunk_max, max_draws = max_draws,
       patience_noaccept = patience_noaccept
     )
+    # SAFE-BC point; fall back to SAFE mean if needed
     yi[k] <- if (is.na(d1["point"]) || is.na(SAFE$point)) SAFE$point else 2*d1["point"] - SAFE$point
     vi[k] <- SAFE$var
   }
@@ -224,11 +229,12 @@ fit_meta_once_fixedK <- function(K_fixed,
   good <- is.finite(yi) & is.finite(vi) & (vi > 0)
   if (!any(good) || sum(good) < 4) return(list(ok = FALSE, m_effects = sum(good)))
   
-  yi <- yi[good]; vi <- pmax(vi[good], 1e-12)
-  m  <- length(yi)
+  yi  <- yi[good]
+  vi  <- pmax(vi[good], 1e-12)
+  m   <- length(yi)
   dat <- data.frame(yi = yi, vi = vi, ID = factor(seq_len(m)))
   
-  # IV model
+  # (A) IV (standard)
   fit_iv <- tryCatch(
     rma.mv(yi ~ 1, V = vi, random = ~ 1 | ID, data = dat,
            method = "REML", test = "t"),
@@ -239,41 +245,17 @@ fit_meta_once_fixedK <- function(K_fixed,
   mu_iv   <- as.numeric(fit_iv$b[1])
   se_iv   <- as.numeric(sqrt(vcov(fit_iv)[1,1]))
   tau2_iv <- sum(fit_iv$sigma2)
+  ci_iv   <- ci_95_from_fit(fit_iv)
   
-  # 95% CI via predict(); fallback to confint(); then ±1.96*SE
-  ci_iv_lb <- ci_iv_ub <- NA_real_
-  pr <- tryCatch(predict(fit_iv), error = function(e) NULL)
-  if (!is.null(pr) && all(c("ci.lb","ci.ub") %in% names(pr))) {
-    ci_iv_lb <- as.numeric(pr$ci.lb)
-    ci_iv_ub <- as.numeric(pr$ci.ub)
-  } else {
-    iv_ci <- tryCatch(confint(fit_iv, level = 0.95), error = function(e) NULL)
-    if (!is.null(iv_ci)) {
-      mat <- if (!is.null(iv_ci$beta)) iv_ci$beta else iv_ci
-      if (!is.null(dim(mat)) && all(c("ci.lb","ci.ub") %in% colnames(mat))) {
-        r <- 1L
-        rn <- rownames(mat)
-        if (!is.null(rn)) {
-          hit <- which(grepl("intrc|Intercept", rn, ignore.case = TRUE))
-          if (length(hit)) r <- hit[1]
-        }
-        ci_iv_lb <- suppressWarnings(as.numeric(mat[r, "ci.lb"]))
-        ci_iv_ub <- suppressWarnings(as.numeric(mat[r, "ci.ub"]))
-      }
-    }
-    if (!is.finite(ci_iv_lb) || !is.finite(ci_iv_ub)) {
-      ci_iv_lb <- mu_iv - 1.96 * se_iv
-      ci_iv_ub <- mu_iv + 1.96 * se_iv
-    }
-  }
-  
+  # Return ONLY IV results (Multiplicative removed)
   list(ok = TRUE,
        m_effects = m,
+       # IV
        mu_iv = mu_iv, se_iv = se_iv, tau2_iv = tau2_iv,
-       ci_iv_lb = ci_iv_lb, ci_iv_ub = ci_iv_ub)
+       ci_iv_lb = ci_iv["lb"], ci_iv_ub = ci_iv["ub"])
 }
 
-# -------------------- One scenario driver + MC error -----------------
+# -------------------- One scenario driver (CI-based coverage) --------
 run_scenario_fixedK <- function(R_meta,
                                 K_fixed,
                                 n1_mean, n2_mean,
@@ -287,14 +269,13 @@ run_scenario_fixedK <- function(R_meta,
                                 n_min = 3L) {
   n_dist <- match.arg(n_dist)
   
-  # Calibrate delta_mu to hit lnM_target GIVEN tau_delta (at mean n)
+  # Calibrate delta_mu so that true lnM (given tau_delta) matches lnM_target
   delta_mu <- delta_mu_from_target(lnM_target, tau_delta,
                                    n1_bar = n1_mean, n2_bar = n2_mean,
                                    sd1 = sd1, sd2 = sd2)
   
-  # Analytic "truth" at mean n (≈ lnM_target after calibration)
-  lnM_true0 <- true_lnM_indep(mu1, mu1 + delta_mu, sd1, sd2,
-                              n1_mean, n2_mean, tau_delta = tau_delta)
+  # Analytic "truth" at mean n (should ≈ lnM_target)
+  lnM_true0 <- true_lnM_indep(mu1, mu1 + delta_mu, sd1, sd2, n1_mean, n2_mean, tau_delta = tau_delta)
   
   one_rep <- function(r) {
     fit_meta_once_fixedK(
@@ -321,89 +302,42 @@ run_scenario_fixedK <- function(R_meta,
   }
   
   ok <- vapply(out_list, function(z) isTRUE(z$ok), logical(1))
-  R_ok <- sum(ok)
   invalid_rate <- 1 - mean(ok)
   
-  # If nothing converged
   if (!any(ok)) {
     return(tibble(
       K_fixed = K_fixed, n1_mean = n1_mean, n2_mean = n2_mean,
       lnM_target = lnM_target, tau_delta = tau_delta,
       lnM_true0 = lnM_true0,
-      bias_iv = NA_real_, bias_iv_mcse = NA_real_, bias_iv_lb = NA_real_, bias_iv_ub = NA_real_,
-      rmse_iv = NA_real_, rmse_iv_mcse = NA_real_, rmse_iv_lb = NA_real_, rmse_iv_ub = NA_real_,
-      cover_iv = NA_real_, cover_iv_mcse = NA_real_, cover_iv_lb = NA_real_, cover_iv_ub = NA_real_,
-      tau2_iv_mean = NA_real_, tau2_iv_mean_mcse = NA_real_, tau2_iv_lb = NA_real_, tau2_iv_ub = NA_real_,
-      mean_m_effects = NA_real_, mean_m_effects_mcse = NA_real_,
-      invalid_meta_rate = 1, invalid_meta_rate_mcse = 0,
-      R_ok = 0L, R_meta = R_meta
+      bias_iv = NA_real_,
+      rmse_iv = NA_real_,
+      cover_iv = NA_real_,
+      tau2_iv_mean = NA_real_,
+      mean_m_effects = NA_real_,
+      invalid_meta_rate = 1
     ))
   }
   
   ext <- function(name) vapply(out_list[ok], `[[`, numeric(1), name)
-  mu_iv   <- ext("mu_iv")
-  tau_iv  <- ext("tau2_iv")
-  m_eff   <- ext("m_effects")
-  ci_lb   <- ext("ci_iv_lb")
-  ci_ub   <- ext("ci_iv_ub")
   
-  diffs   <- mu_iv - lnM_true0
-  d2      <- diffs^2
-  cover   <- (ci_lb <= lnM_true0) & (lnM_true0 <= ci_ub)
-  p_cover <- mean(cover)
+  mu_iv     <- ext("mu_iv")
+  tau_iv    <- ext("tau2_iv")
+  m_eff     <- ext("m_effects")
   
-  # --- MCSEs ---
-  se_bias    <- if (R_ok > 1) sd(diffs) / sqrt(R_ok) else NA_real_
-  mean_d2    <- mean(d2)
-  var_d2     <- if (R_ok > 1) var(d2) else NA_real_
-  se_rmse    <- if (is.finite(var_d2) && mean_d2 > 0) sqrt(var_d2 / (4 * R_ok * mean_d2)) else NA_real_
-  se_cover   <- if (R_ok > 0) sqrt(p_cover * (1 - p_cover) / R_ok) else NA_real_
-  se_tau2    <- if (R_ok > 1) sd(tau_iv) / sqrt(R_ok) else NA_real_
-  se_meff    <- if (R_ok > 1) sd(m_eff)  / sqrt(R_ok) else NA_real_
-  se_invalid <- sqrt(invalid_rate * (1 - invalid_rate) / R_meta)
+  ci_iv_lb   <- ext("ci_iv_lb");   ci_iv_ub   <- ext("ci_iv_ub")
   
-  bias_hat  <- mean(diffs)
-  rmse_hat  <- sqrt(mean_d2)
-  tau2_hat  <- mean(tau_iv)
-  meff_hat  <- mean(m_eff)
-  
-  # 95% MC intervals (Normal approx); clamp coverage to [0,1]
-  ci95 <- function(est, se) c(lb = est - 1.96 * se, ub = est + 1.96 * se)
-  bias_ci   <- if (is.finite(se_bias))  ci95(bias_hat, se_bias) else c(lb = NA_real_, ub = NA_real_)
-  rmse_ci   <- if (is.finite(se_rmse))  ci95(rmse_hat, se_rmse) else c(lb = NA_real_, ub = NA_real_)
-  cover_ci  <- if (is.finite(se_cover)) ci95(p_cover, se_cover) else c(lb = NA_real_, ub = NA_real_)
-  tau2_ci   <- if (is.finite(se_tau2))  ci95(tau2_hat, se_tau2) else c(lb = NA_real_, ub = NA_real_)
-  
-  cover_ci[1] <- max(0, cover_ci[1]); cover_ci[2] <- min(1, cover_ci[2])
+  cover_iv_vec   <- (ci_iv_lb   <= lnM_true0) & (lnM_true0 <= ci_iv_ub)
   
   tibble(
     K_fixed = K_fixed, n1_mean = n1_mean, n2_mean = n2_mean,
     lnM_target = lnM_target, tau_delta = tau_delta,
     lnM_true0 = lnM_true0,
-    
-    bias_iv  = bias_hat,
-    bias_iv_mcse = se_bias,
-    bias_iv_lb = bias_ci["lb"], bias_iv_ub = bias_ci["ub"] ,
-    
-    rmse_iv  = rmse_hat,
-    rmse_iv_mcse = se_rmse,
-    rmse_iv_lb = rmse_ci["lb"], rmse_iv_ub = rmse_ci["ub"],
-    
-    cover_iv = p_cover,
-    cover_iv_mcse = se_cover,
-    cover_iv_lb = cover_ci["lb"], cover_iv_ub = cover_ci["ub"],
-    
-    tau2_iv_mean = tau2_hat,
-    tau2_iv_mean_mcse = se_tau2,
-    tau2_iv_lb = tau2_ci["lb"], tau2_iv_ub = tau2_ci["ub"],
-    
-    mean_m_effects = meff_hat,
-    mean_m_effects_mcse = se_meff,
-    
-    invalid_meta_rate = invalid_rate,
-    invalid_meta_rate_mcse = se_invalid,
-    
-    R_ok = R_ok, R_meta = R_meta
+    bias_iv    = mean(mu_iv    - lnM_true0),
+    rmse_iv    = sqrt(mean((mu_iv    - lnM_true0)^2)),
+    cover_iv   = mean(cover_iv_vec,    na.rm = TRUE),
+    tau2_iv_mean     = mean(tau_iv),
+    mean_m_effects = mean(m_eff),
+    invalid_meta_rate = invalid_rate
   )
 }
 
@@ -420,14 +354,14 @@ seq_progress_map <- function(idx, fun) {
 }
 
 run_grid_fixedK <- function(
-    n_workers = NULL,
+    n_workers = NULL,                      # plan set outside; cosmetic only
     parallel_replicates = TRUE,
     parallel_scenarios  = FALSE,
     # Grid
     R_meta        = 400,
-    K_fixed_vec   = c(20, 50),
-    n_mean_vec    = c(10, 20, 30, 50, 100),
-    lnM_targets   = c(-1.0, -0.7, -0.4, 0.0, 0.4),
+    K_fixed_vec   = c(20, 50, 100),
+    n_mean_vec    = c(10, 20, 30, 50),
+    lnM_targets   = c(-2.0, -1.5, -1.0, -0.7, -0.4, 0.0, 0.4, 0.7, 1.0),
     tau_vec       = c(0.2, 0.4),
     # n distribution & overdispersion
     n_dist        = c("poisson","nbinom"),
@@ -447,19 +381,18 @@ run_grid_fixedK <- function(
     KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
   )
   grid <- tibble::as_tibble(grid)
-  message(sprintf("[grid] Scenarios: %d (K={%s}; n̄={%s}; lnM={%s}; tau={%s}; ndist=%s)",
+  message(sprintf("[grid] Scenarios: %d (K={%s}; n̄={%s}; lnM=%d; tau={%s}; ndist=%s)",
                   nrow(grid),
                   paste(K_fixed_vec, collapse=","),
                   paste(n_mean_vec, collapse=","),
-                  paste(lnM_targets, collapse=","),
+                  length(lnM_targets),
                   paste(tau_vec, collapse=","),
                   n_dist))
   
   run_one <- function(irow) {
     par <- grid[irow,]
     message(sprintf("[scenario %d/%d] K=%d; n̄=%d; lnM=%.3f; tau=%.2f  @%s",
-                    irow, nrow(grid), par$K_fixed, par$n_mean, par$lnM, par$tau,
-                    format(Sys.time(), "%H:%M:%S")))
+                    irow, nrow(grid), par$K_fixed, par$n_mean, par$lnM, par$tau, format(Sys.time(), "%H:%M:%S")))
     res <- run_scenario_fixedK(
       R_meta = R_meta,
       K_fixed = par$K_fixed,
@@ -491,17 +424,18 @@ run_grid_fixedK <- function(
 
 # --------------------------- Demo run --------------------------------
 if (sys.nframe() == 0) {
+  message("=== Quick demo (K fixed; n varies; IV Only; robust CIs; calibrated δμ) ===")
   Sys.setenv(N_WORKERS = Sys.getenv("N_WORKERS", "16"))
   set_parallel_plan(n_workers = as.integer(Sys.getenv("N_WORKERS")), backend = "multisession")
   message(sprintf("[start] %s", format(Sys.time(), "%H:%M:%S")))
   
   demo <- run_grid_fixedK(
     n_workers = as.integer(Sys.getenv("N_WORKERS")),
-    R_meta = 250,
-    K_fixed_vec = c(20, 50),
-    n_mean_vec = c(10, 20, 30, 50, 100),
-    lnM_targets = c(-1.0, -0.7, -0.4, 0.0, 0.4),
-    tau_vec = c(0, 0.2),
+    R_meta = 200,
+    K_fixed_vec = c(20, 50, 100),
+    n_mean_vec = c(10, 20, 30, 50),
+    lnM_targets = c(-1.0, -0.7, -0.4, 0.0, 0.4, 0.7, 1.0),
+    tau_vec = c(0.2, 0.4),
     n_dist = "nbinom", n_nb_size = 8L,
     n_min = 3L,
     parallel_replicates = TRUE,
@@ -509,7 +443,7 @@ if (sys.nframe() == 0) {
     min_kept = 1000, chunk_init = 3000
   )
   
-  message(sprintf("[end]   %s", format(Sys.time(), "%H:%M:%S")))
+  message(sprintf("[end]    %s", format(Sys.time(), "%H:%M:%S")))
   print(demo)
 }
 
@@ -517,7 +451,7 @@ if (sys.nframe() == 0) {
 res <- demo %>%
   rename(K     = K_fixed,
          nbar  = n1_mean,
-         lnM_x = lnM_true0,
+         lnM_x = lnM_target,
          tau   = tau_delta) %>%
   mutate(
     setting = paste0("K=", K, ", n=", nbar),
@@ -525,57 +459,57 @@ res <- demo %>%
                      labels = paste0("tau = ", sort(unique(tau))))
   )
 
-# Bias (IV) with MC ribbon
-p_bias <- ggplot(res, aes(x = lnM_x, y = bias_iv, group = 1)) +
-  geom_ribbon(aes(ymin = bias_iv_lb, ymax = bias_iv_ub), alpha = 0.18, na.rm = TRUE) +
+# Bias: IV Only
+p_bias <- ggplot(res, aes(x = lnM_x, y = bias_iv)) +
   geom_hline(yintercept = 0, linetype = 2) +
-  geom_line() + geom_point(size = 1.8) +
+  geom_line(color = "blue") + geom_point(size = 1.8, color = "blue") +
   facet_grid(tau_f ~ setting, scales = "free_x") +
-  labs(x = "lnM (true ≈ target)", y = "Bias (IV)",
-       title = "Bias: inverse-variance (lines) with 95% Monte Carlo intervals (ribbons)") +
+  labs(x = "lnM (target ≈ truth)", y = "Bias",
+       title = "Bias: IV Estimator") +
   theme_bw(base_size = 12)
 
-# RMSE (IV) with MC ribbon
-p_rmse <- ggplot(res, aes(x = lnM_x, y = rmse_iv, group = 1)) +
-  geom_ribbon(aes(ymin = pmax(0, rmse_iv_lb), ymax = rmse_iv_ub), alpha = 0.18, na.rm = TRUE) +
-  geom_line() + geom_point(size = 1.8) +
+# RMSE: IV Only
+p_rmse <- ggplot(res, aes(x = lnM_x, y = rmse_iv)) +
+  geom_line(color = "red") + geom_point(size = 1.8, color = "red") +
   facet_grid(tau_f ~ setting, scales = "free_x") +
-  labs(x = "lnM (true ≈ target)", y = "RMSE (IV)",
-       title = "RMSE: inverse-variance with 95% Monte Carlo intervals") +
+  labs(x = "lnM (target ≈ truth)", y = "RMSE",
+       title = "RMSE: IV Estimator") +
   theme_bw(base_size = 12)
 
-# Coverage (IV) with MC ribbon
-p_cover <- ggplot(res, aes(x = lnM_x, y = cover_iv, group = 1)) +
-  geom_ribbon(aes(ymin = pmax(0, cover_iv_lb), ymax = pmin(1, cover_iv_ub)), alpha = 0.18, na.rm = TRUE) +
-  geom_hline(yintercept = 0.95, linetype = 2) +
-  geom_line() + geom_point(size = 1.8) +
-  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
-  facet_grid(tau_f ~ setting, scales = "free_x") +
-  labs(x = "lnM (true ≈ target)", y = "Coverage (95% nominal)",
-       title = "CI coverage: inverse-variance with 95% Monte Carlo intervals") +
-  theme_bw(base_size = 12)
+# Coverage: IV Only
+if ("cover_iv" %in% names(res)) {
+  p_cover <- ggplot(res, aes(x = lnM_x, y = cover_iv)) +
+    geom_hline(yintercept = 0.95, linetype = 2) +
+    geom_line(color = "darkgreen") + geom_point(size = 1.8, color = "darkgreen") +
+    scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+    facet_grid(tau_f ~ setting, scales = "free_x") +
+    labs(x = "lnM (target ≈ truth)", y = "Coverage (95% nominal)",
+         title = "Interval coverage: IV Estimator") +
+    theme_bw(base_size = 12)
+}
 
-# Estimated tau^2 (IV) with MC ribbon
-p_tau <- ggplot(res, aes(x = lnM_x, y = tau2_iv_mean, group = 1)) +
-  geom_ribbon(aes(ymin = tau2_iv_lb, ymax = tau2_iv_ub), alpha = 0.18, na.rm = TRUE) +
-  geom_line() + geom_point(size = 1.8) +
-  facet_grid(tau_f ~ setting, scales = "free_x") +
-  labs(x = "lnM (true ≈ target)", y = expression(mean(hat(tau)^2)~"(REML, IV)"),
-       title = expression(paste("Between-study variance ", tau^2, ": mean with 95% Monte Carlo intervals"))) +
-  theme_bw(base_size = 12)
+# Estimated tau^2: IV Only
+if ("tau2_iv_mean" %in% names(res)) {
+  p_tau <- ggplot(res, aes(x = lnM_x, y = tau2_iv_mean)) +
+    geom_line(color = "purple") + geom_point(size = 1.8, color = "purple") +
+    facet_grid(tau_f ~ setting, scales = "free_x") +
+    labs(x = "lnM (target ≈ truth)", y = expression(mean(hat(tau)^2)~"(REML)"),
+         title = expression(paste("Between-study variance ", tau^2, ": estimated (IV)"))) +
+    theme_bw(base_size = 12)
+}
 
 # Invalid replicate rate heatmap
 p_invalid <- ggplot(res, aes(x = lnM_x, y = setting, fill = invalid_meta_rate)) +
   geom_tile(color = "white") +
   facet_wrap(~ tau_f, nrow = 1) +
   scale_fill_gradient(limits = c(0, 1), labels = percent_format(accuracy = 1)) +
-  labs(x = "lnM (true ≈ target)", y = "Scenario", fill = "Invalid rate",
+  labs(x = "lnM (target ≈ truth)", y = "Scenario", fill = "Invalid rate",
        title = "Proportion of failed meta-analysis replicates") +
-  theme_bw(base_size = 12)
+  theme_bw(base_size = 12) + theme(legend.position = "right")
 
 # Print
 p_bias
 p_rmse
-p_cover
-# p_tau
-# p_invalid
+if (exists("p_cover")) p_cover
+if (exists("p_tau"))   p_tau
+p_invalid
