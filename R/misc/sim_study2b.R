@@ -6,6 +6,7 @@
 #   - Estimator (metafor::rma.mv):
 #       (A) Inverse-variance (IV):         V = diag(vi)
 #   - δμ is calibrated so that true lnM (given τδ) ≈ lnM_target at mean n
+#   - CIs: robust helper using t-crit (if d.f. available) else z=1.96
 #   - Coverage computed from these CIs
 #   - Run with 16 cores:
 #       Sys.setenv(N_WORKERS = "16"); source("fixedK_varyN_SAFE_IV_ONLY.R")
