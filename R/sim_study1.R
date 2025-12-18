@@ -228,10 +228,10 @@ param_grid <- rbind(grid_ind, grid_dep)
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
 
-K_repl <- as.integer(Sys.getenv("K_REPL", "200"))         # demo / speed
-MIN_KEPT <- as.integer(Sys.getenv("MIN_KEPT", "2000"))    # accepted SAFE draws target
-CHUNK_INIT <- as.integer(Sys.getenv("CHUNK_INIT", "4000"))
-CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000000"))
+K_repl <- as.integer(Sys.getenv("K_REPL", "100000"))         # demo / speed - 1e5
+MIN_KEPT <- as.integer(Sys.getenv("MIN_KEPT", "100000"))    # accepted SAFE draws target - 1e5
+CHUNK_INIT <- as.integer(Sys.getenv("CHUNK_INIT", "5000"))
+CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000"))
 MAX_DRAWS  <- as.numeric(Sys.getenv("MAX_DRAWS", "Inf"))
 PATIENCE   <- as.integer(Sys.getenv("PATIENCE", "5"))
 
@@ -392,24 +392,24 @@ pbapply::pboptions(pbop)
 
 ## -------- 5c. COLLAPSE + SERIALISE -----------------------------------
 results <- do.call(rbind, results_list)
-summary_file <- sprintf("lnM_summary_SAFEfun_%s.rds", Sys.Date())
-saveRDS(results, summary_file)
-message("Saved overall summary to: ", summary_file)
+#summary_file <- sprintf("lnM_summary_SAFEfun_%s.rds", Sys.Date())
+#saveRDS(results, summary_file)
+#message("Saved overall summary to: ", summary_file)
 
-save_raw <- TRUE
-if (save_raw) {
-  dir.create("raw_runs", showWarnings = FALSE)
-  for (i in seq_along(results_list)) {
-    raw_i <- attr(results_list[[i]], "raw_M")
-    if (is.null(raw_i)) next
-    saveRDS(raw_i, sprintf("raw_runs/row_%03d.rds", i), compress = "xz")
-  }
-  message("Saved ", length(results_list), " raw replicate files into raw_runs/")
-}
+#save_raw <- TRUE
+#if (save_raw) {
+#  dir.create("raw_runs", showWarnings = FALSE)
+#  for (i in seq_along(results_list)) {
+#    raw_i <- attr(results_list[[i]], "raw_M")
+#    if (is.null(raw_i)) next
+#    saveRDS(raw_i, sprintf("raw_runs/row_%03d.rds", i), compress = "xz")
+#  }
+#  message("Saved ", length(results_list), " raw replicate files into raw_runs/")
+#}
 
-write.csv(results,
-          file = sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date()),
-          row.names = FALSE)
+#write.csv(results,
+#          file = sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date()),
+#          row.names = FALSE)
 
 ## -------- 6. plots (same style as your code) --------------------------
 results <- results %>%
