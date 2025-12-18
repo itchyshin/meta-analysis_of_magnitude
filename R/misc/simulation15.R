@@ -253,7 +253,7 @@ param_grid <- rbind(grid_ind, grid_dep)
 
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
-K_repl <- 1e5     # demo / speed
+K_repl <- 200     # demo / speed
 B_boot <- 1e5
 
 outer_verbose <- TRUE
