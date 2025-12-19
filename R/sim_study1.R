@@ -19,7 +19,7 @@ theme_set(theme_bw(11))
 
 ## -------- 0. globals & helpers ---------------------------------------
 maxVar   <- 20
-posify   <- function(x, eps = 1e-12) pmax(x, eps)
+posify   <- function(x, eps = 1e-12) pmax(x, eps) # for flowing point issue
 safe_gap <- function(g) ifelse(g <= 0, NA_real_, g)
 
 ## lnM kernel (ASCII)
@@ -406,8 +406,9 @@ summary_csv <- sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date())
 write.csv(results, file = summary_csv, row.names = FALSE)
 message("Saved overall summary (CSV) to: ", summary_csv)
 
-# 2) Optionally save raw replicate matrices (one file per param-grid row)
-save_raw <- FALSE
+# 2) Optionally save raw replicate results (one file per param-grid row)
+#    Saved format: data.frame with runs as rows, stats as columns
+save_raw <- TRUE
 
 if (isTRUE(save_raw)) {
   raw_dir <- "raw_runs"
@@ -415,11 +416,21 @@ if (isTRUE(save_raw)) {
   
   n_saved <- 0L
   for (i in seq_along(results_list)) {
-    raw_i <- attr(results_list[[i]], "raw_M")
-    if (is.null(raw_i)) next
+    
+    raw_M <- attr(results_list[[i]], "raw_M")
+    if (is.null(raw_M)) next
+    
+    # raw_M is stats x K_REPL -> convert to K_REPL x stats
+    raw_df <- as.data.frame(t(raw_M))
+    
+    # keep replicate id
+    raw_df$rep <- seq_len(nrow(raw_df))
+    
+    # put rep first
+    raw_df <- raw_df[, c("rep", setdiff(names(raw_df), "rep"))]
     
     raw_path <- file.path(raw_dir, sprintf("row_%03d.rds", i))
-    saveRDS(raw_i, raw_path, compress = "xz")
+    saveRDS(raw_df, raw_path, compress = "xz")
     n_saved <- n_saved + 1L
   }
   
@@ -523,3 +534,151 @@ message("Mean boot_accept_prop (kept/tried): ", mean(results$boot_accept_prop, n
 ## Windows (cmd):
 ##   set N_CORES=48 & set K_REPL=2000 & set MIN_KEPT=2000 & set CHUNK_INIT=4000 & Rscript simulation16_SAFEfun_style.R
 ########################################################################
+
+## ================================================================
+## 7) Monte-Carlo error diagnostics + visualisations
+##    Paste AFTER: results <- do.call(rbind, results_list)
+## ================================================================
+
+library(tidyr)
+
+## --- 7a. add "effective n" and an approximate RSE for Var_MC_SAFEpt ----
+## Var(s^2) approx -> RSE(s^2) ~ sqrt(2/(n-1)) if replicate distribution not crazy
+## We approximate n as number of finite SAFE points among the "ok_d" subset.
+## (This matches how Var_MC_SAFEpt was computed.)
+
+get_n_ok_safe <- function(raw_M) {
+  if (is.null(raw_M)) return(NA_integer_)
+  ok_d <- is.finite(raw_M["delta_pt", ]) & is.finite(raw_M["delta_var", ]) & (raw_M["delta_var", ] > 0)
+  Mok  <- raw_M[, ok_d, drop = FALSE]
+  sum(is.finite(Mok["safe_pt", ]))
+}
+
+n_ok_safe <- vapply(results_list, function(x) get_n_ok_safe(attr(x, "raw_M")), integer(1))
+results$n_ok_safe <- n_ok_safe
+
+results$RSE_VarMC_SAFEpt <- with(results,
+                                 ifelse(is.finite(n_ok_safe) & n_ok_safe >= 3, sqrt(2 / (n_ok_safe - 1)), NA_real_)
+)
+
+## Optional: MCSE for the MC variance baseline itself (rough, uses Var_MC_SAFEpt)
+results$MCSE_VarMC_SAFEpt <- with(results,
+                                  ifelse(is.finite(Var_MC_SAFEpt) & is.finite(RSE_VarMC_SAFEpt),
+                                         abs(Var_MC_SAFEpt) * RSE_VarMC_SAFEpt, NA_real_)
+)
+
+## --- 7b. Error-bar bias plots using mcse_bias_* already computed -------
+## (A) PI bias ± 1.96*MCSE
+## (B) SAFE-BC bias ± 1.96*MCSE
+
+bias_mc_df <- bind_rows(
+  results %>% transmute(theta, facet_label,
+                        estimator = "PI",
+                        bias = delta_bias,
+                        mcse = mcse_bias_delta),
+  results %>% transmute(theta, facet_label,
+                        estimator = "SAFE-BC",
+                        bias = safe_bias,
+                        mcse = mcse_bias_safe)
+)
+
+p_bias_mc <- ggplot(bias_mc_df,
+                    aes(theta, bias, colour = estimator, group = estimator)) +
+  geom_hline(yintercept = 0, linetype = 2, colour = "grey50") +
+  geom_line() +
+  geom_errorbar(aes(ymin = bias - 1.96 * mcse, ymax = bias + 1.96 * mcse),
+                width = 0.03, alpha = 0.4) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
+  labs(x = expression(theta), y = "Bias (estimate - true lnM)",
+       colour = NULL,
+       title = "Bias curves with Monte-Carlo error bars (±1.96×MCSE)")
+print(p_bias_mc)
+
+## --- 7c. Heatmap-style view: where is MC error large? -----------------
+## Here we display MCSE of bias (absolute) and RSE of Var_MC baseline.
+
+mc_diag <- results %>%
+  transmute(facet_label, theta,
+            mcse_bias_PI   = abs(mcse_bias_delta),
+            mcse_bias_SAFE = abs(mcse_bias_safe),
+            RSE_VarMC_SAFEpt = RSE_VarMC_SAFEpt)
+
+mc_long <- mc_diag %>%
+  pivot_longer(cols = c(mcse_bias_PI, mcse_bias_SAFE, RSE_VarMC_SAFEpt),
+               names_to = "metric", values_to = "value")
+
+p_mc <- ggplot(mc_long, aes(theta, value, group = metric, colour = metric)) +
+  geom_line() +
+  facet_wrap(~ facet_label, ncol = 4) +
+  labs(x = expression(theta), y = "MC error metric",
+       title = "Monte-Carlo error diagnostics (per grid cell)") +
+  theme(legend.position = "bottom")
+print(p_mc)
+
+## --- 7d. Show “worst offenders” tables --------------------------------
+## (helps decide where to increase K_REPL)
+
+worst_bias_mcse <- results %>%
+  mutate(abs_mcse_PI = abs(mcse_bias_delta),
+         abs_mcse_SAFE = abs(mcse_bias_safe)) %>%
+  arrange(desc(pmax(abs_mcse_PI, abs_mcse_SAFE))) %>%
+  select(design, n1, n2, theta, facet_label,
+         mcse_bias_delta, mcse_bias_safe, RSE_VarMC_SAFEpt) %>%
+  head(20)
+
+print(worst_bias_mcse, row.names = FALSE)
+
+worst_varmc_rse <- results %>%
+  arrange(desc(RSE_VarMC_SAFEpt)) %>%
+  select(design, n1, n2, theta, facet_label,
+         n_ok_safe, Var_MC_SAFEpt, RSE_VarMC_SAFEpt, MCSE_VarMC_SAFEpt) %>%
+  head(20)
+
+print(worst_varmc_rse, row.names = FALSE)
+
+## --- 7e. Convergence trace for ONE chosen grid row --------------------
+## This shows running bias vs number of replicates.
+## Pick a row index you care about (e.g., smallest n + small theta)
+TRACE_ROW <- as.integer(Sys.getenv("TRACE_ROW", "100"))  # change or set env var
+
+raw_trace <- attr(results_list[[TRACE_ROW]], "raw_M")
+if (!is.null(raw_trace)) {
+  
+  p_row <- param_grid[TRACE_ROW, ]
+  sd0 <- 1
+  true_ln <- if (p_row$design == "indep") lnM_true_ind(p_row$theta, p_row$n1, p_row$n2, sd0) else lnM_true_dep(p_row$theta, p_row$n1, sd0)
+  
+  ok_d <- is.finite(raw_trace["delta_pt", ]) & is.finite(raw_trace["delta_var", ]) & (raw_trace["delta_var", ] > 0)
+  Mok  <- raw_trace[, ok_d, drop = FALSE]
+  
+  PI_pt   <- Mok["delta_pt", ]
+  SAFE_pt <- Mok["safe_pt", ]
+  
+  ## running means -> running bias
+  run_mean <- function(x) cumsum(x) / seq_along(x)
+  
+  tr_df <- data.frame(
+    k = seq_along(PI_pt),
+    PI_bias_run   = run_mean(PI_pt) - true_ln,
+    SAFE_bias_run = run_mean(SAFE_pt) - true_ln
+  )
+  
+  tr_long <- tr_df %>%
+    pivot_longer(cols = c(PI_bias_run, SAFE_bias_run),
+                 names_to = "estimator", values_to = "run_bias") %>%
+    mutate(estimator = ifelse(estimator == "PI_bias_run", "PI", "SAFE-BC"))
+  
+  p_trace <- ggplot(tr_long, aes(k, run_bias, colour = estimator)) +
+    geom_hline(yintercept = 0, linetype = 2, colour = "grey50") +
+    geom_line() +
+    labs(x = "Number of usable Monte-Carlo replicates (after ok_d filter)",
+         y = "Running bias",
+         title = sprintf("Convergence trace (row %d): %s theta=%.3g n1=%d n2=%d",
+                         TRACE_ROW, p_row$design, p_row$theta, p_row$n1,
+                         ifelse(p_row$design=="indep", p_row$n2, p_row$n1)),
+         colour = NULL)
+  print(p_trace)
+  
+} else {
+  message("TRACE_ROW raw_M not found; set save_raw or ensure attr(raw_M) kept.")
+}
