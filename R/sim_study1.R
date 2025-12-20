@@ -224,8 +224,8 @@ param_grid <- rbind(grid_ind, grid_dep)
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
 
-K_repl     <- as.integer(Sys.getenv("K_REPL", "10000"))     # demo default
-MIN_KEPT   <- as.integer(Sys.getenv("MIN_KEPT", "10000"))   # accepted SAFE draws target
+K_repl     <- as.integer(Sys.getenv("K_REPL", "100000"))     # demo default
+MIN_KEPT   <- as.integer(Sys.getenv("MIN_KEPT", "100000"))   # accepted SAFE draws target
 CHUNK_INIT <- as.integer(Sys.getenv("CHUNK_INIT", "5000"))
 CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000000"))
 MAX_DRAWS  <- as.numeric(Sys.getenv("MAX_DRAWS", "Inf"))
