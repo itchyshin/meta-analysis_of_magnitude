@@ -377,7 +377,7 @@ runner <- function(i) {
 
 ## -------- 5a. PARALLEL outer loop ------------------------------------
 n_cores_use <- suppressWarnings(as.integer(Sys.getenv("N_CORES", "")))
-if (is.na(n_cores_use) || n_cores_use <= 0) n_cores_use <- max(1L, detectCores() - 4)
+if (is.na(n_cores_use) || n_cores_use <= 0) n_cores_use <- max(1L, detectCores() - 184)
 
 pbop <- pbapply::pboptions(type = "txt")
 
@@ -682,3 +682,4 @@ if (!is.null(raw_trace)) {
 } else {
   message("TRACE_ROW raw_M not found; set save_raw or ensure attr(raw_M) kept.")
 }
+
