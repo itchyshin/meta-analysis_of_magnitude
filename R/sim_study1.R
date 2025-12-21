@@ -224,8 +224,8 @@ param_grid <- rbind(grid_ind, grid_dep)
 ## -------- 5. simulation driver ---------------------------------------
 set.seed(20250625)
 
-K_repl     <- as.integer(Sys.getenv("K_REPL", "100000"))     # demo default
-MIN_KEPT   <- as.integer(Sys.getenv("MIN_KEPT", "100000"))   # accepted SAFE draws target
+K_repl     <- as.integer(Sys.getenv("K_REPL", "10000"))     # demo default
+MIN_KEPT   <- as.integer(Sys.getenv("MIN_KEPT", "10000"))   # accepted SAFE draws target
 CHUNK_INIT <- as.integer(Sys.getenv("CHUNK_INIT", "5000"))
 CHUNK_MAX  <- as.numeric(Sys.getenv("CHUNK_MAX", "2000000"))
 MAX_DRAWS  <- as.numeric(Sys.getenv("MAX_DRAWS", "Inf"))
@@ -392,8 +392,24 @@ if (.Platform$OS.type == "windows") {
 
 pbapply::pboptions(pbop)
 
-## -------- 5c. COLLAPSE (optionally serialize) ------------------------
-results <- do.call(rbind, results_list)
+## -------- 5c. COLLAPSE (The SAFE way) ------------------------
+
+# 1. Identify which results are actual data frames (successful)
+# and which are character strings (errors)
+is_df <- sapply(results_list, is.data.frame)
+
+# 2. Only combine the successful ones
+results <- do.call(rbind, results_list[is_df])
+
+# 3. Force numeric types just in case (Safety first)
+results$theta <- as.numeric(as.character(results$theta))
+results$n1    <- as.numeric(as.character(results$n1))
+
+# 4. Report any failures so you know which designs to check
+if(any(!is_df)) {
+  message(sprintf("Warning: %d parameter sets failed and were excluded.", sum(!is_df)))
+  message("Failed indices: ", paste(which(!is_df), collapse = ", "))
+}
 
 ## -------- SAVE OUTPUTS -----------------------------------------------
 
@@ -439,6 +455,8 @@ if (isTRUE(save_raw)) {
 
 
 ## -------- 6. plots (same style as your code) --------------------------
+results <- readRDS(here("lnM_summary_SAFEfun_2025-12-21.rds"))
+
 results <- results %>%
   mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
 
