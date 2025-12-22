@@ -552,152 +552,249 @@ message("Mean boot_accept_prop (kept/tried): ", mean(results$boot_accept_prop, n
 ## Windows (cmd):
 ##   set N_CORES=48 & set K_REPL=2000 & set MIN_KEPT=2000 & set CHUNK_INIT=4000 & Rscript simulation16_SAFEfun_style.R
 ########################################################################
-
 ## ================================================================
-## 7) Monte-Carlo error diagnostics + visualisations
-##    Paste AFTER: results <- do.call(rbind, results_list)
+## 7) Monte-Carlo error diagnostics from disk (raw_runs/*.rds)
+##    (NO dependency on results_list)
 ## ================================================================
 
+library(dplyr)
 library(tidyr)
+library(ggplot2)
+library(pbapply)
+library(here)
 
-## --- 7a. add "effective n" and an approximate RSE for Var_MC_SAFEpt ----
-## Var(s^2) approx -> RSE(s^2) ~ sqrt(2/(n-1)) if replicate distribution not crazy
-## We approximate n as number of finite SAFE points among the "ok_d" subset.
-## (This matches how Var_MC_SAFEpt was computed.)
+## ---- 7a. Load summary results + reconstruct facet labels -------------
+## (Use your own filename here)
+summary_file <- here("lnM_summary_SAFEfun_2025-12-21.rds")
+results <- readRDS(summary_file)
 
-get_n_ok_safe <- function(raw_M) {
-  if (is.null(raw_M)) return(NA_integer_)
-  ok_d <- is.finite(raw_M["delta_pt", ]) & is.finite(raw_M["delta_var", ]) & (raw_M["delta_var", ] > 0)
-  Mok  <- raw_M[, ok_d, drop = FALSE]
-  sum(is.finite(Mok["safe_pt", ]))
+results <- results %>%
+  mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
+
+## Keep your facet ordering logic (optional)
+facet_info <- results %>% distinct(facet_label, design, n1, n2)
+
+balanced_ind <- facet_info %>%
+  filter(design == "indep", n1 == n2) %>% arrange(n1) %>% pull(facet_label)
+unbalanced_ind <- facet_info %>%
+  filter(design == "indep", n1 != n2) %>% arrange(n1) %>% pull(facet_label)
+paired_balanced <- facet_info %>%
+  filter(design == "paired") %>% arrange(n1) %>% pull(facet_label)
+
+new_levels <- c(balanced_ind, unbalanced_ind, paired_balanced)
+results <- results %>% mutate(facet_label = factor(facet_label, levels = new_levels))
+
+## ---- 7b. Locate raw files -------------------------------------------
+raw_dir <- here("raw_runs")
+raw_files <- list.files(raw_dir, pattern = "^row_[0-9]{3}\\.rds$", full.names = TRUE)
+if (!length(raw_files)) stop("No raw files found in: ", raw_dir)
+
+## row index extracted from filename row_XXX.rds
+row_index_from_path <- function(p) as.integer(sub("^row_([0-9]{3})\\.rds$", "\\1", basename(p)))
+
+## ---- 7c. Helper: compute diagnostics from ONE raw_df -----------------
+## raw_df format: runs as rows, stats as columns, includes rep column
+## columns expected: delta_pt, delta_var, safe_pt, safe_var (at least)
+one_raw_diag <- function(raw_df) {
+  
+  # defensive: allow rep or not
+  if ("rep" %in% names(raw_df)) raw_df <- raw_df %>% select(-rep)
+  
+  # ok_d filter as in the main script
+  ok_d <- is.finite(raw_df$delta_pt) & is.finite(raw_df$delta_var) & (raw_df$delta_var > 0)
+  
+  if (!any(ok_d)) {
+    return(data.frame(
+      n_ok_d = 0L,
+      n_ok_safe = 0L,
+      RSE_VarMC_SAFEpt = NA_real_,
+      # MCSE of bias cannot be computed without true_lnM; filled later
+      sd_PI = NA_real_,
+      sd_SAFE = NA_real_
+    ))
+  }
+  
+  df_ok <- raw_df[ok_d, , drop = FALSE]
+  
+  # usable SAFE points within ok_d subset (matches your Var_MC_SAFEpt definition)
+  ok_safe_pt <- is.finite(df_ok$safe_pt)
+  n_ok_safe <- sum(ok_safe_pt)
+  
+  # RSE of sample variance (approx)
+  RSE_varmc <- if (n_ok_safe >= 3) sqrt(2 / (n_ok_safe - 1)) else NA_real_
+  
+  # sd needed later to compute MCSE(bias) = sd(est - true)/sqrt(n_eff)
+  # (true_lnM is constant, so sd(est-true)=sd(est))
+  sd_PI   <- sd(df_ok$delta_pt, na.rm = TRUE)
+  sd_SAFE <- sd(df_ok$safe_pt,  na.rm = TRUE)
+  
+  data.frame(
+    n_ok_d = nrow(df_ok),
+    n_ok_safe = n_ok_safe,
+    RSE_VarMC_SAFEpt = RSE_varmc,
+    sd_PI = sd_PI,
+    sd_SAFE = sd_SAFE
+  )
 }
 
-n_ok_safe <- vapply(results_list, function(x) get_n_ok_safe(attr(x, "raw_M")), integer(1))
-results$n_ok_safe <- n_ok_safe
+## ---- 7d. Compute diagnostics for ALL rows from disk ------------------
+## We join by "row id" = file index, which should match param_grid row number
+diag_list <- pbapply::pblapply(raw_files, function(f) {
+  rid <- row_index_from_path(f)
+  raw_df <- readRDS(f)
+  d <- one_raw_diag(raw_df)
+  d$row_id <- rid
+  d
+})
 
-results$RSE_VarMC_SAFEpt <- with(results,
-                                 ifelse(is.finite(n_ok_safe) & n_ok_safe >= 3, sqrt(2 / (n_ok_safe - 1)), NA_real_)
-)
+diag_df <- bind_rows(diag_list)
 
-## Optional: MCSE for the MC variance baseline itself (rough, uses Var_MC_SAFEpt)
-results$MCSE_VarMC_SAFEpt <- with(results,
-                                  ifelse(is.finite(Var_MC_SAFEpt) & is.finite(RSE_VarMC_SAFEpt),
-                                         abs(Var_MC_SAFEpt) * RSE_VarMC_SAFEpt, NA_real_)
-)
+## Join diagnostics onto summary results
+## IMPORTANT: this assumes row_id == row number in param_grid used when saving files.
+## If you saved with the same i used in runner loop, this is correct.
+results2 <- results %>%
+  mutate(row_id = seq_len(nrow(results))) %>%
+  left_join(diag_df, by = "row_id")
 
-## --- 7b. Error-bar bias plots using mcse_bias_* already computed -------
-## (A) PI bias ± 1.96*MCSE
-## (B) SAFE-BC bias ± 1.96*MCSE
+## ---- 7e. Recompute MCSE(bias) from disk (recommended) ----------------
+## MCSE(bias) = sd(estimator)/sqrt(n_eff)
+## n_eff should match the subset used for bias curves in your summaries.
+## Here we use:
+##  - PI: n_ok_d
+##  - SAFE: n_ok_safe (within ok_d)
+results2 <- results2 %>%
+  mutate(
+    mcse_bias_PI_disk   = ifelse(is.finite(sd_PI)   & n_ok_d >= 2,   sd_PI   / sqrt(n_ok_d),   NA_real_),
+    mcse_bias_SAFE_disk = ifelse(is.finite(sd_SAFE) & n_ok_safe >= 2, sd_SAFE / sqrt(n_ok_safe), NA_real_)
+  )
 
-bias_mc_df <- bind_rows(
-  results %>% transmute(theta, facet_label,
-                        estimator = "PI",
-                        bias = delta_bias,
-                        mcse = mcse_bias_delta),
-  results %>% transmute(theta, facet_label,
-                        estimator = "SAFE-BC",
-                        bias = safe_bias,
-                        mcse = mcse_bias_safe)
-)
+## If you prefer to keep the MCSE computed during the run, keep:
+##   mcse_bias_delta and mcse_bias_safe
+## But for “from disk only”, use *_disk below.
 
-p_bias_mc <- ggplot(bias_mc_df,
-                    aes(theta, bias, colour = estimator, group = estimator)) +
-  geom_hline(yintercept = 0, linetype = 2, colour = "grey50") +
-  geom_line() +
-  geom_errorbar(aes(ymin = bias - 1.96 * mcse, ymax = bias + 1.96 * mcse),
-                width = 0.03, alpha = 0.4) +
-  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-  labs(x = expression(theta), y = "Bias (estimate - true lnM)",
-       colour = NULL,
-       title = "Bias curves with Monte-Carlo error bars (±1.96×MCSE)")
-print(p_bias_mc)
-
-## --- 7c. Heatmap-style view: where is MC error large? -----------------
-## Here we display MCSE of bias (absolute) and RSE of Var_MC baseline.
-
-mc_diag <- results %>%
-  transmute(facet_label, theta,
-            mcse_bias_PI   = abs(mcse_bias_delta),
-            mcse_bias_SAFE = abs(mcse_bias_safe),
-            RSE_VarMC_SAFEpt = RSE_VarMC_SAFEpt)
-
-mc_long <- mc_diag %>%
+## ---- 7f. Plot diagnostics (like your figure) -------------------------
+mc_long <- results2 %>%
+  transmute(
+    theta, facet_label,
+    mcse_bias_PI = mcse_bias_PI_disk,
+    mcse_bias_SAFE = mcse_bias_SAFE_disk,
+    RSE_VarMC_SAFEpt = RSE_VarMC_SAFEpt
+  ) %>%
   pivot_longer(cols = c(mcse_bias_PI, mcse_bias_SAFE, RSE_VarMC_SAFEpt),
                names_to = "metric", values_to = "value")
 
-p_mc <- ggplot(mc_long, aes(theta, value, group = metric, colour = metric)) +
+p_mc <- ggplot(mc_long, aes(theta, value, colour = metric, group = metric)) +
   geom_line() +
   facet_wrap(~ facet_label, ncol = 4) +
-  labs(x = expression(theta), y = "MC error metric",
-       title = "Monte-Carlo error diagnostics (per grid cell)") +
+  labs(x = expression(theta),
+       y = "MC error metric",
+       title = "Monte-Carlo error diagnostics (per grid cell; computed from raw_runs)") +
   theme(legend.position = "bottom")
 print(p_mc)
 
-## --- 7d. Show “worst offenders” tables --------------------------------
-## (helps decide where to increase K_REPL)
-
-worst_bias_mcse <- results %>%
-  mutate(abs_mcse_PI = abs(mcse_bias_delta),
-         abs_mcse_SAFE = abs(mcse_bias_safe)) %>%
-  arrange(desc(pmax(abs_mcse_PI, abs_mcse_SAFE))) %>%
-  select(design, n1, n2, theta, facet_label,
-         mcse_bias_delta, mcse_bias_safe, RSE_VarMC_SAFEpt) %>%
+## ---- 7g. “Worst offenders” tables -----------------------------------
+worst_mcse <- results2 %>%
+  mutate(worst_mcse = pmax(abs(mcse_bias_PI_disk), abs(mcse_bias_SAFE_disk), na.rm = TRUE)) %>%
+  arrange(desc(worst_mcse)) %>%
+  select(row_id, design, n1, n2, theta, facet_label,
+         n_ok_d, n_ok_safe,
+         mcse_bias_PI_disk, mcse_bias_SAFE_disk, RSE_VarMC_SAFEpt) %>%
   head(20)
 
-print(worst_bias_mcse, row.names = FALSE)
+print(worst_mcse, row.names = FALSE)
 
-worst_varmc_rse <- results %>%
+worst_rse <- results2 %>%
   arrange(desc(RSE_VarMC_SAFEpt)) %>%
-  select(design, n1, n2, theta, facet_label,
-         n_ok_safe, Var_MC_SAFEpt, RSE_VarMC_SAFEpt, MCSE_VarMC_SAFEpt) %>%
+  select(row_id, design, n1, n2, theta, facet_label,
+         n_ok_safe, RSE_VarMC_SAFEpt) %>%
   head(20)
 
-print(worst_varmc_rse, row.names = FALSE)
+print(worst_rse, row.names = FALSE)
 
-## --- 7e. Convergence trace for ONE chosen grid row --------------------
-## This shows running bias vs number of replicates.
-## Pick a row index you care about (e.g., smallest n + small theta)
-TRACE_ROW <- as.integer(Sys.getenv("TRACE_ROW", "100"))  # change or set env var
+## ================================================================
+## Plot MCSE of the *average* variance estimates:
+##   - mcse_varbar_delta : MCSE of mean(delta_var)
+##   - mcse_varbar_safe  : MCSE of mean(safe_var)
+## Assumes you already have: results (or results2) + facet_label
+## ================================================================
 
-raw_trace <- attr(results_list[[TRACE_ROW]], "raw_M")
-if (!is.null(raw_trace)) {
+var_mcse_df <- results %>%
+  transmute(theta, facet_label,
+            PI_var_MCSE   = mcse_varbar_delta,
+            SAFE_var_MCSE = mcse_varbar_safe) %>%
+  pivot_longer(cols = c(PI_var_MCSE, SAFE_var_MCSE),
+               names_to = "estimator", values_to = "mcse") %>%
+  mutate(estimator = recode(estimator,
+                            PI_var_MCSE   = "PI (delta-var)",
+                            SAFE_var_MCSE = "SAFE (safe-var)"))
+
+p_var_mcse <- ggplot(var_mcse_df, aes(theta, mcse, colour = estimator, group = estimator)) +
+  geom_line() +
+  facet_wrap(~ facet_label, ncol = 4) +
+  labs(x = expression(theta),
+       y = "MCSE of mean(variance estimate)",
+       colour = NULL,
+       title = "Monte-Carlo error of variance estimators (MCSE of the mean)") +
+  theme(legend.position = "bottom")
+
+print(p_var_mcse)
+
+## Optional: same plot on log scale (useful if MCSE spans orders of magnitude)
+p_var_mcse_log <- p_var_mcse + scale_y_log10()
+print(p_var_mcse_log)
+
+## ---- 7h. Optional: convergence trace from ONE raw file (robust) ------
+TRACE_ROW <- as.integer(Sys.getenv("TRACE_ROW", "1"))
+trace_path <- file.path(raw_dir, sprintf("row_%03d.rds", TRACE_ROW))
+
+if (!file.exists(trace_path)) {
+  message("Trace file not found: ", trace_path)
+} else {
   
-  p_row <- param_grid[TRACE_ROW, ]
-  sd0 <- 1
-  true_ln <- if (p_row$design == "indep") lnM_true_ind(p_row$theta, p_row$n1, p_row$n2, sd0) else lnM_true_dep(p_row$theta, p_row$n1, sd0)
+  raw_df <- readRDS(trace_path)
   
-  ok_d <- is.finite(raw_trace["delta_pt", ]) & is.finite(raw_trace["delta_var", ]) & (raw_trace["delta_var", ] > 0)
-  Mok  <- raw_trace[, ok_d, drop = FALSE]
+  # baseline ok filter (as in main script) for PI-related validity
+  ok_d <- is.finite(raw_df$delta_pt) & is.finite(raw_df$delta_var) & (raw_df$delta_var > 0)
   
-  PI_pt   <- Mok["delta_pt", ]
-  SAFE_pt <- Mok["safe_pt", ]
+  # separate usable streams
+  df_PI   <- raw_df[ok_d & is.finite(raw_df$delta_pt), , drop = FALSE]
+  df_SAFE <- raw_df[ok_d & is.finite(raw_df$safe_pt),  , drop = FALSE]
   
-  ## running means -> running bias
+  message(sprintf("TRACE_ROW=%d: ok_d=%d, PI usable=%d, SAFE usable=%d",
+                  TRACE_ROW, sum(ok_d), nrow(df_PI), nrow(df_SAFE)))
+  
   run_mean <- function(x) cumsum(x) / seq_along(x)
   
-  tr_df <- data.frame(
-    k = seq_along(PI_pt),
-    PI_bias_run   = run_mean(PI_pt) - true_ln,
-    SAFE_bias_run = run_mean(SAFE_pt) - true_ln
+  true_ln <- results2$true_lnM[results2$row_id == TRACE_ROW][1]
+  
+  # If true lnM is undefined for this grid cell, plot running means (not bias)
+  do_bias <- is.finite(true_ln)
+  
+  tr_df <- bind_rows(
+    data.frame(
+      k = seq_len(nrow(df_PI)),
+      estimator = "PI",
+      value = run_mean(df_PI$delta_pt) - if (do_bias) true_ln else 0
+    ),
+    data.frame(
+      k = seq_len(nrow(df_SAFE)),
+      estimator = "SAFE-BC",
+      value = run_mean(df_SAFE$safe_pt) - if (do_bias) true_ln else 0
+    )
   )
   
-  tr_long <- tr_df %>%
-    pivot_longer(cols = c(PI_bias_run, SAFE_bias_run),
-                 names_to = "estimator", values_to = "run_bias") %>%
-    mutate(estimator = ifelse(estimator == "PI_bias_run", "PI", "SAFE-BC"))
-  
-  p_trace <- ggplot(tr_long, aes(k, run_bias, colour = estimator)) +
+  p_trace <- ggplot(tr_df, aes(k, value, colour = estimator)) +
     geom_hline(yintercept = 0, linetype = 2, colour = "grey50") +
     geom_line() +
-    labs(x = "Number of usable Monte-Carlo replicates (after ok_d filter)",
-         y = "Running bias",
-         title = sprintf("Convergence trace (row %d): %s theta=%.3g n1=%d n2=%d",
-                         TRACE_ROW, p_row$design, p_row$theta, p_row$n1,
-                         ifelse(p_row$design=="indep", p_row$n2, p_row$n1)),
-         colour = NULL)
-  print(p_trace)
+    labs(
+      x = "Usable replicates (after filters)",
+      y = if (do_bias) "Running bias" else "Running mean (centered at 0)",
+      title = if (do_bias)
+        sprintf("Convergence trace (row %03d): running bias", TRACE_ROW)
+      else
+        sprintf("Convergence trace (row %03d): true lnM is NA, showing running means", TRACE_ROW),
+      colour = NULL
+    )
   
-} else {
-  message("TRACE_ROW raw_M not found; set save_raw or ensure attr(raw_M) kept.")
+  print(p_trace)
 }
-
