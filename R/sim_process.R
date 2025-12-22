@@ -1,4 +1,13 @@
 # visualizing results
+
+## ================================================================
+library(ggplot2)     # plotting
+library(dplyr)       # facet ordering
+library(parallel)    # multicore helpers
+library(pbapply)     # progress bars for *apply
+library(here)        # file paths relative to this script
+theme_set(theme_bw(11))
+
 ## -------- 6. plots (same style as your code) --------------------------
 results <- readRDS(here("lnM_summary_SAFEfun_2025-12-21.rds"))
 
