@@ -281,29 +281,29 @@ bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample s
 (p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
 
 
-# alternative model
-
-vtilde <- 1/dat_cond$n0
-
-Vf   <- diag(as.numeric(vtilde))
-levs <- levels(factor(dat_cond$ES.ID))
-rownames(Vf) <- levs
-colnames(Vf) <- levs
-
-ma_alt <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
-  data   = dat_cond,
-  method = "REML",
-  test = "t",
-    R      = list(ES.ID = Vf),
-    Rscale = FALSE)
-
-summary(ma_alt)
+# # alternative model
+# 
+# vtilde <- 1/dat_cond$n0
+# 
+# Vf   <- diag(as.numeric(vtilde))
+# levs <- levels(factor(dat_cond$ES.ID))
+# rownames(Vf) <- levs
+# colnames(Vf) <- levs
+# 
+# ma_alt <- rma.mv(
+#   yi   = yi_lnM_safe, 
+#   V    = vi_lnM_safe,
+#   random =  list(
+#     ~ 1 | Study,
+#     ~ 1 | ES.ID
+#   ),
+#   data   = dat_cond,
+#   method = "REML",
+#   test = "t",
+#     R      = list(ES.ID = Vf),
+#     Rscale = FALSE)
+# 
+# summary(ma_alt)
 
 ###########
 # Example 2
@@ -534,28 +534,28 @@ bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "sqrt(inverse sample s
 (p7 + p8) / (p9 + p10) / (p11 + p12) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
 
 
-# alternative model
-
-vtilde <- 1/dat$n0 
-
-Vf   <- diag(as.numeric(vtilde))
-levs <- levels(factor(dat$case.nr ))
-rownames(Vf) <- levs
-colnames(Vf) <- levs
-
-ma_alt2 <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
-  data   = dat,
-  method = "REML",
-  test = "t",
-  R      = list(case.nr = Vf),
-  Rscale = FALSE)
-
-summary(ma_alt2)
+# # alternative model
+# 
+# vtilde <- 1/dat$n0 
+# 
+# Vf   <- diag(as.numeric(vtilde))
+# levs <- levels(factor(dat$case.nr ))
+# rownames(Vf) <- levs
+# colnames(Vf) <- levs
+# 
+# ma_alt2 <- rma.mv(
+#   yi   = yi_lnM_safe, 
+#   V    = vi_lnM_safe,
+#   random =  list(
+#     ~ 1 | study,
+#     ~ 1 |case.nr
+#   ),
+#   data   = dat,
+#   method = "REML",
+#   test = "t",
+#   R      = list(case.nr = Vf),
+#   Rscale = FALSE)
+# 
+# summary(ma_alt2)
 
 
