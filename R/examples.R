@@ -164,7 +164,19 @@ ma_abs <- rma.mv(
 summary(ma_abs)
 i2_ml(ma_abs)
 
-p1 <- orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "Study")
+# adding overll to orchard plot
+main <- mod_results(ma_abs, group = "Study")
+main <- unclass(main)
+main$mod_table$name <- "Overall" 
+main$data$moderator <- "Overall"
+class(main) <- "orchard"
+
+p1 <- orchard_plot(main,  xlab = "abs(SMD)", 
+                   group = "Study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
 
 # meta-analysis using safe
 
@@ -185,7 +197,21 @@ summary(ma_safe)
 i2_ml(ma_safe)
 ml_m1(ma_safe)
 
-p2 <- orchard_plot(ma_safe,  xlab = "lnM", group = "Study")
+
+# adding overll to orchard plot
+main2 <- mod_results(ma_safe, group = "Study")
+main2 <- unclass(main2)
+main2$mod_table$name <- "Overall" 
+main2$data$moderator <- "Overall"
+class(main2) <- "orchard"
+
+
+p2 <- orchard_plot(main2,  xlab = "lnM", 
+                   group = "Study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
 
 
 # N = 265 as some of missing values in moderators
@@ -204,7 +230,12 @@ mod_abs <- rma.mv(
   test = "t")
 summary(mod_abs)
 # bubble plot
-p3 <- bubble_plot(mod_abs, mod = "Recovery", ylab = "abs(SMD)", xlab = "Recovery days", group = "Study")
+p3 <- bubble_plot(mod_abs, mod = "Recovery", 
+                  ylab = "abs(SMD)", 
+                  xlab = "Recovery period", 
+                  group = "Study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
 
 # meta-regression lnM
 mod_safe <- rma.mv(
@@ -221,7 +252,14 @@ mod_safe <- rma.mv(
 
 summary(mod_safe)
 # bubble plot
-p4 <- bubble_plot(mod_safe, mod = "Recovery", ylab = "lnM", xlab = "Recovery days", group = "Study")
+p4 <- bubble_plot(mod_safe, mod = "Recovery", 
+                  ylab = "lnM", 
+                  xlab = "Recovery period", 
+                  group = "Study",
+                  legend.pos = "bottom.left") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
 
 # Egger regression 
 # Creaing a variable using n0
@@ -243,7 +281,12 @@ egger_abs <- rma.mv(
   test = "t")
 summary(egger_abs)
 # bubble plot
-p5 <- bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", xlab = "sqrt(inverse sample size)", group = "Study")
+p5 <- bubble_plot(egger_abs, mod = "nSE", 
+                  ylab = "abs(SMD)", 
+                  xlab = "sqrt(inverse sample size)",
+                  group = "Study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
 
 # using safe
 egger_safe <- rma.mv(
@@ -259,7 +302,13 @@ egger_safe <- rma.mv(
   test = "t")
 summary(egger_safe)
 # bubble plot
-p6 <-bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "Study")
+p6 <-bubble_plot(egger_safe, mod = "nSE", 
+                 ylab = "lnM", 
+                 xlab = "sqrt(inverse sample size)", 
+                 group = "Study",
+                 legend.pos = "bottom.right") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
 
 
 egger_safe2 <- rma.mv(
@@ -279,6 +328,28 @@ bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample s
 
 # making 2 x 3 panel fig
 (p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+
+# sensitivity analysis - we want to get effect sizes where n1 + n2 = or > 40
+dat_cond_sens <- dat_cond %>% filter((n1i + n2i) >= 40)
+
+ma_safe_sens <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond_sens,
+  method = "REML",
+  test = "t")
+
+summary(ma_safe_sens)
+summary(ma_safe)
+
+i2_ml(ma_safe_sens)
+#ml_m1(ma_safe_sens)
+
+orchard_plot(ma_safe_sens,  xlab = "lnM", group = "Study")
 
 
 # # alternative model
@@ -422,7 +493,21 @@ ma_abs <- rma.mv(
   test = "t")
 summary(ma_abs)
 i2_ml(ma_abs)
-p7 <- orchard_plot(ma_abs,  xlab = "abs(SMD)", group = "study")
+
+
+# adding overll to orchard plot
+main <- mod_results(ma_abs, group = "study")
+main <- unclass(main)
+main$mod_table$name <- "Overall" 
+main$data$moderator <- "Overall"
+class(main) <- "orchard"
+
+p7 <- orchard_plot(main,  xlab = "abs(SMD)", 
+                   group = "study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
 
 # meta-analysis using safe
 ma_safe <- rma.mv(
@@ -437,7 +522,22 @@ ma_safe <- rma.mv(
   test = "t")
 summary(ma_safe)
 i2_ml(ma_safe)
-p8 <- orchard_plot(ma_safe,  xlab = "lnM", group = "study")
+
+# adding overll to orchard plot
+main2 <- mod_results(ma_safe, group = "study")
+main2 <- unclass(main2)
+main2$mod_table$name <- "Overall" 
+main2$data$moderator <- "Overall"
+class(main2) <- "orchard"
+
+
+p8 <- orchard_plot(main2,  xlab = "lnM", 
+                   group = "study",
+                   trunk.size = 0.8,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
 
 # meta-regression abs(d) using taxon.for.plot
 mod_abs <- rma.mv(
@@ -453,7 +553,14 @@ mod_abs <- rma.mv(
   test = "t")
 summary(mod_abs)
 # orchard plot
-p9 <- orchard_plot(mod_abs, mod = "taxon.for.plot", xlab = "abs(SMD)", group = "study")
+p9 <- orchard_plot(mod_abs, 
+                   mod = "taxon.for.plot", 
+                   xlab = "abs(SMD)", 
+                   group = "study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#CC6677", 4))
 # multiple comparison
 summary(glht(mod_abs, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
@@ -471,7 +578,14 @@ mod_safe <- rma.mv(
   test = "t")
 summary(mod_safe)
 # orchard plot
-p10 <- orchard_plot(mod_safe, mod = "taxon.for.plot", xlab = "lnM", group = "study")
+p10 <- orchard_plot(mod_safe, 
+                    mod = "taxon.for.plot", 
+                    xlab = "lnM", 
+                    group = "study",
+                    trunk.size = 0.6,
+                    branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
 # multiple comparison
 summary(glht(mod_safe, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
@@ -496,7 +610,13 @@ egger_abs <- rma.mv(
   test = "t")
 summary(egger_abs)
 # bubble plot
-p11 <- bubble_plot(egger_abs, mod = "nSE", ylab = "abs(SMD)", xlab = "sqrt(inverse sample size)", group = "study")
+p11 <- bubble_plot(egger_abs, mod = "nSE", 
+                   ylab = "abs(SMD)", 
+                   xlab = "sqrt(inverse sample size)", 
+                   group = "study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+                   
 
 # using safe
 egger_safe <- rma.mv(
@@ -512,7 +632,13 @@ egger_safe <- rma.mv(
   test = "t")
 summary(egger_safe)
 # bubble plot
-p12 <- bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "study")
+p12 <- bubble_plot(egger_safe, mod = "nSE", 
+                   ylab = "lnM", 
+                   xlab = "sqrt(inverse sample size)", 
+                   group = "study",
+                   legend.pos = "bottom.right") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
 
 
 egger_safe2 <- rma.mv(
@@ -532,6 +658,27 @@ bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "sqrt(inverse sample s
 
 # making 2 x 3 panel fig
 (p7 + p8) / (p9 + p10) / (p11 + p12) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+
+# sensitivity analysis - we want to get effect sizes where n1 + n2 = or > 40
+dat_sens <- dat %>% filter((sample.size.control + sample.size.noise.1) >= 40)
+
+ma_safe_sens <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat_sens,
+  method = "REML",
+  test = "t")
+
+summary(ma_safe_sens)
+summary(ma_safe)
+
+i2_ml(ma_safe_sens)
+
+orchard_plot(ma_safe_sens,  xlab = "lnM", group = "study")
 
 
 # # alternative model

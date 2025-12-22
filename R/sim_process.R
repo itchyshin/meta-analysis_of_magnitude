@@ -1,16 +1,14 @@
 # visualizing results
 
-## ================================================================
-library(ggplot2)     # plotting
-library(dplyr)       # facet ordering
-library(parallel)    # multicore helpers
-library(pbapply)     # progress bars for *apply
-library(here)        # file paths relative to this script
-theme_set(theme_bw(11))
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(here)
+library(grid)
 
-## -------- 6. plots (same style as your code) --------------------------
 results <- readRDS(here("lnM_summary_SAFEfun_2025-12-21.rds"))
 
+# ------------------------- facet ordering -------------------------------------
 results <- results %>%
   mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
 
@@ -26,69 +24,130 @@ paired_balanced <- facet_info %>%
 new_levels <- c(balanced_ind, unbalanced_ind, paired_balanced)
 results <- results %>% mutate(facet_label = factor(facet_label, levels = new_levels))
 
-## Bias plot
+# a nicer strip label: "indep   n1=5   n2=5"
+strip_labeller <- function(x) gsub(" n1=", "   n1=", gsub(" n2=", "   n2=", x))
+
+base_theme <- theme_bw(11) +
+  theme(
+    legend.title = element_text(),
+    legend.position = "right",
+    strip.background = element_rect(fill = "grey85", colour = "grey40"),
+    strip.text = element_text(face = "plain"),
+    panel.grid.minor = element_blank()
+  )
+
+# ------------------------- legend-inside helpers ------------------------------
+extract_legend <- function(p) {
+  g <- ggplotGrob(p)
+  idx <- which(sapply(g$grobs, function(x) x$name) == "guide-box")
+  g$grobs[[idx]]
+}
+
+# Draw a faceted ggplot and overlay its legend inside the panels.
+# x,y,w,h are in npc (0..1). Tweak these to land in your desired facet.
+draw_with_legend_inside <- function(p, x = 0.80, y = 0.73, w = 0.18, h = 0.26) {
+  leg <- extract_legend(p + theme(legend.position = "right"))
+  p0  <- p + theme(legend.position = "none")
+  
+  g <- ggplotGrob(p0)
+  grid.newpage()
+  grid.draw(g)
+  
+  vp <- viewport(x = x, y = y, width = w, height = h, just = c("left", "bottom"))
+  pushViewport(vp)
+  grid.draw(leg)
+  upViewport()
+  
+  invisible(NULL)
+}
+
+# ------------------------- 1) Bias: (estimate - true lnM) ---------------------
 bias_df <- bind_rows(
   results %>% select(theta, facet_label, delta_bias) %>%
-    rename(bias = delta_bias) %>% mutate(estimator = "delta"),
+    rename(bias = delta_bias) %>% mutate(estimator = "PI"),
   results %>% select(theta, facet_label, safe_bias) %>%
     rename(bias = safe_bias)  %>% mutate(estimator = "SAFE")
 )
 
 p_bias <- ggplot(bias_df, aes(theta, bias, colour = estimator, group = estimator)) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-  geom_line() +
-  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-  labs(x = "theta", y = "Bias (estimate - true lnM)", colour = "Estimator") +
-  scale_colour_manual(values = c(delta = "firebrick", SAFE = "steelblue"),
-                      labels = c(delta = "PI", SAFE = "SAFE-BC"))
-print(p_bias)
+  geom_line(linewidth = 0.6) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+             labeller = labeller(facet_label = strip_labeller)) +
+  labs(x = expression(theta),
+       y = "Bias (estimate \u2212 true lnM)",
+       colour = "estimator") +
+  scale_colour_manual(values = c("PI" = "firebrick", "SAFE" = "steelblue")) +
+  base_theme
 
-## Relative-bias of variance plot (baseline = Var_MC_SAFEpt)
+# Print with legend inside (top-right-ish; tweak if needed)
+draw_with_legend_inside(p_bias, x = 0.80, y = 0.73, w = 0.18, h = 0.26)
+
+# If you also want the normal version:
+# print(p_bias)
+
+# ------------------------- 2) Relative bias of Var (%) ------------------------
 rb_df <- bind_rows(
   results %>% select(theta, facet_label, relbias_delta) %>%
-    rename(relbias = relbias_delta) %>% mutate(estimator = "delta"),
+    rename(relbias = relbias_delta) %>% mutate(estimator = "Delta"),
   results %>% select(theta, facet_label, relbias_safe) %>%
     rename(relbias = relbias_safe)  %>% mutate(estimator = "SAFE")
 )
 
 p_relbias <- ggplot(rb_df, aes(theta, relbias, colour = estimator, group = estimator)) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
-  geom_line() +
-  facet_wrap(~ facet_label, ncol = 4, nrow = 3) +
-  labs(x = "theta", y = "Relative bias of Var (%) vs MC(SAFE-BC point)", colour = "Estimator") +
-  scale_colour_manual(values = c(delta = "firebrick", SAFE = "steelblue"),
-                      labels = c(delta = "PI", SAFE = "SAFE-var"))
-print(p_relbias)
+  geom_line(linewidth = 0.6) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+             labeller = labeller(facet_label = strip_labeller)) +
+  labs(x = expression(theta),
+       y = "Relative bias of Var (%)",
+       colour = "estimator") +
+  scale_colour_manual(values = c("Delta" = "firebrick", "SAFE" = "steelblue")) +
+  base_theme
 
-## Coverage
-cov_df <- rbind(
-  data.frame(results[,c("theta","design","n1","n2")], estimator="delta", cover=results$cover_delta),
-  data.frame(results[,c("theta","design","n1","n2")], estimator="SAFE",  cover=results$cover_safe)
+draw_with_legend_inside(p_relbias, x = 0.80, y = 0.73, w = 0.18, h = 0.26)
+
+# ------------------------- 3) Coverage (if you still want it) -----------------
+cov_df <- bind_rows(
+  results %>% transmute(theta, facet_label, estimator = "PI",   cover = cover_delta),
+  results %>% transmute(theta, facet_label, estimator = "SAFE", cover = cover_safe)
 )
 
-p_cov <- ggplot(cov_df, aes(theta, cover, colour=estimator, group=estimator)) +
-  geom_hline(yintercept=0.95, linetype=2, colour="grey50") +
-  geom_line() +
-  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
-  labs(x=expression(theta), y="Empirical coverage") +
-  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue"),
-                      labels=c(delta="PI", SAFE="SAFE-BC"))
-print(p_cov)
+p_cov <- ggplot(cov_df, aes(theta, cover, colour = estimator, group = estimator)) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", colour = "grey50") +
+  geom_line(linewidth = 0.6) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+             labeller = labeller(facet_label = strip_labeller)) +
+  labs(x = expression(theta), y = "Empirical coverage", colour = "estimator") +
+  scale_colour_manual(values = c("PI" = "firebrick", "SAFE" = "steelblue")) +
+  base_theme
 
-## RMSE
-rmse_df <- rbind(
-  data.frame(results[,c("theta","design","n1","n2")], estimator="delta", rmse=results$rmse_delta),
-  data.frame(results[,c("theta","design","n1","n2")], estimator="SAFE",  rmse=results$rmse_safe)
+draw_with_legend_inside(p_cov, x = 0.80, y = 0.73, w = 0.18, h = 0.26)
+
+# ------------------------- 4) RMSE (if you still want it) ---------------------
+rmse_df <- bind_rows(
+  results %>% transmute(theta, facet_label, estimator = "PI",   rmse = rmse_delta),
+  results %>% transmute(theta, facet_label, estimator = "SAFE", rmse = rmse_safe)
 )
 
-p_rmse <- ggplot(rmse_df, aes(theta, rmse, colour=estimator, group=estimator)) +
-  geom_line() +
-  facet_wrap(~ paste0(design," n1=",n1," n2=",n2), ncol=4) +
-  scale_colour_manual(values=c(delta="firebrick", SAFE="steelblue"),
-                      labels=c(delta="PI", SAFE="SAFE-BC")) +
-  labs(x=expression(theta), y="RMSE ( ln Mhat - ln M )", colour=NULL) +
-  theme_bw(11)
-print(p_rmse)
+p_rmse <- ggplot(rmse_df, aes(theta, rmse, colour = estimator, group = estimator)) +
+  geom_line(linewidth = 0.6) +
+  facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+             labeller = labeller(facet_label = strip_labeller)) +
+  labs(x = expression(theta),
+       y = expression(RMSE~"("~hat(lnM)~"\u2212"~lnM~")"),
+       colour = "estimator") +
+  scale_colour_manual(values = c("PI" = "firebrick", "SAFE" = "steelblue")) +
+  base_theme
+
+draw_with_legend_inside(p_rmse, x = 0.80, y = 0.73, w = 0.18, h = 0.26)
+
+# ------------------------------------------------------------------------------
+# Notes:
+# - If the legend lands between panels, tweak x/y slightly.
+# - Typical ranges for top-right panel in a 4x3 facet:
+#   x ~ 0.78–0.86, y ~ 0.70–0.80, w ~ 0.14–0.22, h ~ 0.20–0.30
+# ------------------------------------------------------------------------------
 
 ## Quick diagnostics
 message("Mean abs(delta_bias): ", mean(abs(results$delta_bias), na.rm = TRUE))
@@ -98,6 +157,15 @@ message("Mean abs(relbias_safe):  ", mean(abs(results$relbias_safe),  na.rm = TR
 message("Mean delta_cap_rate: ", mean(results$delta_cap_rate, na.rm = TRUE))
 message("Mean SAFE_ok_rate:   ", mean(results$SAFE_ok_rate,   na.rm = TRUE))
 message("Mean boot_accept_prop (kept/tried): ", mean(results$boot_accept_prop, na.rm = TRUE))
+
+
+
+
+
+
+
+
+
 
 ########################################################################
 ## How to run (examples)
@@ -226,7 +294,7 @@ results2 <- results2 %>%
 ##   mcse_bias_delta and mcse_bias_safe
 ## But for “from disk only”, use *_disk below.
 
-## ---- 7f. Plot diagnostics (like your figure) -------------------------
+## ---- 7f. Plot diagnostics ----------------------------------------
 mc_long <- results2 %>%
   transmute(
     theta, facet_label,
@@ -264,6 +332,10 @@ worst_rse <- results2 %>%
   head(20)
 
 print(worst_rse, row.names = FALSE)
+
+
+
+################
 
 ## ================================================================
 ## Plot MCSE of the *average* variance estimates:
