@@ -422,6 +422,11 @@ summary_csv <- sprintf("lnM_summary_SAFEfun_%s.csv", Sys.Date())
 write.csv(results, file = summary_csv, row.names = FALSE)
 message("Saved overall summary (CSV) to: ", summary_csv)
 
+# saving results_list for raw replicates
+saveRDS(results_list,
+        file = sprintf("lnM_results_list_SAFEfun_%s.rds", Sys.Date()),
+        compress = "xz")
+
 # 2) Optionally save raw replicate results (one file per param-grid row)
 #    Saved format: data.frame with runs as rows, stats as columns
 save_raw <- TRUE
