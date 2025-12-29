@@ -495,7 +495,7 @@ summary(ma_abs)
 i2_ml(ma_abs)
 
 
-# adding overll to orchard plot
+# adding overall to orchard plot
 main <- mod_results(ma_abs, group = "study")
 main <- unclass(main)
 main$mod_table$name <- "Overall" 
