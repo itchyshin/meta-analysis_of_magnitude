@@ -352,6 +352,33 @@ i2_ml(ma_safe_sens)
 orchard_plot(ma_safe_sens,  xlab = "lnM", group = "Study")
 
 
+# doing meta-regression again
+# meta-regression lnM
+mod_safe2 <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ magnitude + duration + Recovery + nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+
+summary(mod_safe2)
+r2_ml(mod_safe2)
+
+bubble_plot(mod_safe2, mod = "Recovery", 
+            ylab = "lnM", 
+            xlab = "Recovery period", 
+            group = "Study",
+            legend.pos = "bottom.left") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
+
+
 # # alternative model
 # 
 # vtilde <- 1/dat_cond$n0
@@ -679,6 +706,76 @@ summary(ma_safe)
 i2_ml(ma_safe_sens)
 
 orchard_plot(ma_safe_sens,  xlab = "lnM", group = "study")
+
+# doing meta-regression again
+# meta-regression safe using taxon.for.plot
+mod_safe2 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ taxon.for.plot - 1 + nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(mod_safe2)
+# comparing
+summary(mod_safe)
+
+r2_ml(mod_safe2)
+
+results <- mod_results(mod_safe2, 
+                       group = "study", 
+                       mod = "taxon.for.plot", 
+                       at = list(nSE = c(0)))
+
+# orchard plot
+# probably closer to the truth
+orchard_plot(results, 
+                    mod = "taxon.for.plot", 
+                    xlab = "lnM", 
+                    group = "study",
+                    trunk.size = 0.6,
+                    branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
+
+
+# sensivity + nSE - even smaller
+
+mod_safe3 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ taxon.for.plot - 1 + nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat_sens,
+  method = "REML",
+  test = "t")
+summary(mod_safe3)
+
+
+r2_ml(mod_safe3)
+
+results2 <- mod_results(mod_safe3, 
+                       group = "study", 
+                       mod = "taxon.for.plot", 
+                       at = list(nSE = c(0)))
+
+# orchard plot
+# probably closer to the truth
+orchard_plot(results2, 
+             mod = "taxon.for.plot", 
+             xlab = "lnM", 
+             group = "study",
+             trunk.size = 0.6,
+             branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
 
 
 # # alternative model
