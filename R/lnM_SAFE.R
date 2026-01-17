@@ -3,7 +3,7 @@
 #  - SAFE uses Chi-square / Wishart (no MVN for variances)
 #  - Single delta version (delta-1) only
 #  - Bounded while-loops via `max_chunks`
-#  - Aligns with MS Equations (1)–(7) and SAFE §2.3
+#  - Aligns with MS Equations (1)–(7) and SAFE 2.3
 # ================================================================
 
 library(MASS)    # for mvrnorm (paired means)
