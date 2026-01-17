@@ -1,6 +1,6 @@
 ########################################################################
 ## lnM – simulation, summary & graphics  (Delta-method vs SAFE-BC)
-## * ASCII-only, multicore outer loop, verbose progress, disk persist *
+## * multicore outer loop, verbose progress, disk persist *
 ##
 ## This version uses SAFE_fun.R (safe_lnM_indep / safe_lnM_dep) and
 ## targets a minimum number of ACCEPTED bootstrap draws (min_kept).
@@ -22,7 +22,7 @@ maxVar   <- 20
 posify   <- function(x, eps = 1e-12) pmax(x, eps) # for flowing point issue
 safe_gap <- function(g) ifelse(g <= 0, NA_real_, g)
 
-## lnM kernel (ASCII)
+## lnM 
 lnM_core <- function(Delta, MSW, n0)
   0.5 * (log(Delta) - log(n0) - log(MSW))
 

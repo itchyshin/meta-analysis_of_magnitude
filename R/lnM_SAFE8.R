@@ -188,55 +188,55 @@ compare_methods <- function(x1, x2, s1, s2,
   invisible(out)
 }
 
-# ---------- quick demo ------------------------------------------
-set.seed(123)
-
-# Independent example
-compare_methods(x1 = 5, x2 = 5,
-                s1 = 1,  s2 = 1,
-                n1 = 40, n2 = 40,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-
-compare_methods(x1 = 7, x2 = 5,
-                s1 = 1,  s2 = 1,
-                n1 = 40, n2 = 40,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-compare_methods(x1 = 8, x2 = 5,
-                s1 = 2,  s2 = 2,
-                n1 = 40, n2 = 40,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-# Paired example (r = 0.8)
-compare_methods(x1 = 5, x2 = 5,
-                s1 = 1,  s2 = 1,
-                n1 = 40, r  = 0.8,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-compare_methods(x1 = 7, x2 = 5,
-                s1 = 1,  s2 = 1,
-                n1 = 40, r  = 0.8,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-compare_methods(x1 = 8, x2 = 5,
-                s1 = 2,  s2 = 2,
-                n1 = 40, r  = 0.8,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-compare_methods(x1 = 5, x2 = 5,
-                s1 = 2,  s2 = 2.2,
-                n1 = 40, r  = 0.8,
-                B  = 5e4, chunk = 4000, max_chunks = 50)
-
-# note - adjusted lnM and d equivalent
-
-# lnM_star: your lnM (SAFE bias-corrected), n0: harmonic mean size
-lnM_center <- function(lnM, n0, d0 = 1) {
-  adj <- 0.5*log(n0 / ((n0/2)*d0^2 - 1))
-  lnM + adj
-}
-# large-n0 simple shift to zero at |delta| = s_W
-lnM_simple <- function(lnM) lnM + log(sqrt(2))
-# exact d-equivalent
-d_eq <- function(lnM, n0) sqrt(2*exp(2*lnM) + 2/n0)
+# # ---------- quick demo ------------------------------------------
+# set.seed(123)
+# 
+# # Independent example
+# compare_methods(x1 = 5, x2 = 5,
+#                 s1 = 1,  s2 = 1,
+#                 n1 = 40, n2 = 40,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# 
+# compare_methods(x1 = 7, x2 = 5,
+#                 s1 = 1,  s2 = 1,
+#                 n1 = 40, n2 = 40,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# compare_methods(x1 = 8, x2 = 5,
+#                 s1 = 2,  s2 = 2,
+#                 n1 = 40, n2 = 40,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# # Paired example (r = 0.8)
+# compare_methods(x1 = 5, x2 = 5,
+#                 s1 = 1,  s2 = 1,
+#                 n1 = 40, r  = 0.8,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# compare_methods(x1 = 7, x2 = 5,
+#                 s1 = 1,  s2 = 1,
+#                 n1 = 40, r  = 0.8,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# compare_methods(x1 = 8, x2 = 5,
+#                 s1 = 2,  s2 = 2,
+#                 n1 = 40, r  = 0.8,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# compare_methods(x1 = 5, x2 = 5,
+#                 s1 = 2,  s2 = 2.2,
+#                 n1 = 40, r  = 0.8,
+#                 B  = 5e4, chunk = 4000, max_chunks = 50)
+# 
+# # note - adjusted lnM and d equivalent
+# 
+# # lnM_star: your lnM (SAFE bias-corrected), n0: harmonic mean size
+# lnM_center <- function(lnM, n0, d0 = 1) {
+#   adj <- 0.5*log(n0 / ((n0/2)*d0^2 - 1))
+#   lnM + adj
+# }
+# # large-n0 simple shift to zero at |delta| = s_W
+# lnM_simple <- function(lnM) lnM + log(sqrt(2))
+# # exact d-equivalent
+# d_eq <- function(lnM, n0) sqrt(2*exp(2*lnM) + 2/n0)

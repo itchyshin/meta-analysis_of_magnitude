@@ -12,27 +12,8 @@ library(orchaRd)
 library(multcomp)
 library(patchwork)
 
+# Dan has implemented this in tne orchaRd package?
 source(here("R", "lnM_SAFE8.R")) 
-
-# TODO 
-# we need to be able to deal with NA for get_ln_safe
-# 
-# get_lnM_safe_or_na <- function(m1, m2, s1, s2, n1, n2, B = 1e3) {
-#   if (any(is.na(c(m1, m2, s1, s2, n1, n2)))) {
-#     # Return a 1-row tibble of NAs
-#     return(tibble(
-#       yi_lnM_safe = NA_real_,
-#       vi_lnM_safe = NA_real_,
-#       draws_kept  = NA_integer_,
-#       draws_total = NA_integer_
-#     ))
-#   }
-#   get_lnM_safe(m1, m2, s1, s2, n1, n2, B = B)
-# }
-
-# TODO
-# d_eq conversion to SAFE
-# SAFE functions need % of success or not boostrap
 
 
 # function for folded normal
@@ -378,30 +359,6 @@ bubble_plot(mod_safe2, mod = "Recovery",
   scale_fill_manual(values = "#117733") 
 
 
-
-# # alternative model
-# 
-# vtilde <- 1/dat_cond$n0
-# 
-# Vf   <- diag(as.numeric(vtilde))
-# levs <- levels(factor(dat_cond$ES.ID))
-# rownames(Vf) <- levs
-# colnames(Vf) <- levs
-# 
-# ma_alt <- rma.mv(
-#   yi   = yi_lnM_safe, 
-#   V    = vi_lnM_safe,
-#   random =  list(
-#     ~ 1 | Study,
-#     ~ 1 | ES.ID
-#   ),
-#   data   = dat_cond,
-#   method = "REML",
-#   test = "t",
-#     R      = list(ES.ID = Vf),
-#     Rscale = FALSE)
-# 
-# summary(ma_alt)
 
 ###########
 # Example 2
@@ -776,30 +733,5 @@ orchard_plot(results2,
              branch.size = 5) +
   scale_colour_manual(values = rep("grey20",8)) +
   scale_fill_manual(values = rep("#117733", 4)) 
-
-
-# # alternative model
-# 
-# vtilde <- 1/dat$n0 
-# 
-# Vf   <- diag(as.numeric(vtilde))
-# levs <- levels(factor(dat$case.nr ))
-# rownames(Vf) <- levs
-# colnames(Vf) <- levs
-# 
-# ma_alt2 <- rma.mv(
-#   yi   = yi_lnM_safe, 
-#   V    = vi_lnM_safe,
-#   random =  list(
-#     ~ 1 | study,
-#     ~ 1 |case.nr
-#   ),
-#   data   = dat,
-#   method = "REML",
-#   test = "t",
-#   R      = list(case.nr = Vf),
-#   Rscale = FALSE)
-# 
-# summary(ma_alt2)
 
 
