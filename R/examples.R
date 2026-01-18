@@ -15,7 +15,6 @@ library(patchwork)
 # Dan has implemented this in tne orchaRd package?
 source(here("R", "SAFE_fun.R")) 
 
-
 # function for folded normal
 folded_norm <- function(mu, var) {
   sigma  <- sqrt(var)
@@ -42,13 +41,13 @@ get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
 
 # lnM - SAFE
 ## ── 5.  SAFE ln M  (parametric bootstrap)  ─────────────────────────────────
-##        B = 10 000 resamples is a good default.
+##        B = 10,000 resamples is a good default.
 get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, min_kept   = 1e5, 
                          chunk_init = 5000) {
   out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2)
   tibble(
     yi_lnM_safe = out$point,
-    vi_lnM_safe = out$var,           # ← bootstrap sampling variance
+    vi_lnM_safe = out$var,           # bootstrap sampling variance
     draws_kept  = out$kept,
     draws_total = out$total
   )

@@ -15,10 +15,9 @@ library(dplyr)       # facet ordering
 library(parallel)    # multicore helpers
 library(pbapply)     # progress bars for *apply
 library(here)        # file paths relative to this script
-theme_set(theme_bw(11))
 
 ## -------- 0. globals & helpers ---------------------------------------
-maxVar   <- 20
+maxVar   <- 20 # maximum variance allowed before capping (see the manucript)
 posify   <- function(x, eps = 1e-12) pmax(x, eps) # for flowing point issue
 safe_gap <- function(g) ifelse(g <= 0, NA_real_, g)
 
@@ -376,8 +375,10 @@ runner <- function(i) {
 }
 
 ## -------- 5a. PARALLEL outer loop ------------------------------------
+
+# we have 184 x 2 cores so we are using half of the cores
 n_cores_use <- suppressWarnings(as.integer(Sys.getenv("N_CORES", "")))
-if (is.na(n_cores_use) || n_cores_use <= 0) n_cores_use <- max(1L, detectCores() - 184)
+if (is.na(n_cores_use) || n_cores_use <= 0) n_cores_use <- max(1L, detectCores()/2)
 
 pbop <- pbapply::pboptions(type = "txt")
 

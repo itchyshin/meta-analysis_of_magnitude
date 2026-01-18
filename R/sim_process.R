@@ -1,4 +1,11 @@
+# ================================================================
 # visualizing results
+# Fig 1: point esitmate bias
+# Fig 2: relative bias of variance estimate
+# Fig S1: coverage
+# Fig S2: RMSE
+# Fig S3: MCSE diagnostics
+# ================================================================
 
 library(dplyr)
 library(ggplot2)
@@ -157,14 +164,6 @@ message("Mean abs(relbias_safe):  ", mean(abs(results$relbias_safe),  na.rm = TR
 message("Mean delta_cap_rate: ", mean(results$delta_cap_rate, na.rm = TRUE))
 message("Mean SAFE_ok_rate:   ", mean(results$SAFE_ok_rate,   na.rm = TRUE))
 message("Mean boot_accept_prop (kept/tried): ", mean(results$boot_accept_prop, na.rm = TRUE))
-
-
-
-
-
-
-
-
 
 
 ########################################################################
@@ -333,9 +332,6 @@ worst_rse <- results2 %>%
 
 print(worst_rse, row.names = FALSE)
 
-
-
-################
 
 ## ================================================================
 ## Plot MCSE of the *average* variance estimates:

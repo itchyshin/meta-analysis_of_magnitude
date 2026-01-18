@@ -1,5 +1,5 @@
 # ================================================================
-#  CORRECTED lnM: Delta-1 vs SAFE bootstrap
+#  functions for detla method and SAFE bootstrap for lnM
 # ================================================================
 
 library(MASS)
