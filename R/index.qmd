@@ -1,26 +1,1421 @@
 ---
-title: "online"
-format: html
-editor: visual
+title: "Supplementary Tutorial: lnM (Delta plug-in vs SAFE-BC)"
+subtitle: "Worked examples + full simulation reproduction (figures + tables)"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    theme: cosmo
+    highlight-style: github
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
 ```{r}
-1 + 1
+#| label: setup
+#| include: false
+
+knitr::opts_chunk$set(
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  out.width = "100%"
+)
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(metafor)        # escalc(), rma.mv()
+  library(here)
+  library(orchaRd)
+  library(kableExtra)
+  library(patchwork)
+  library(multcomp)
+})
+
+# loading SAFE function
+source(here("R", "SAFE_fun.R")) 
+
+# ---- Folded normal helper (matches examples.R) ---------------------------
+folded_norm <- function(mu, var) {
+  sigma  <- sqrt(var)
+  if (sigma == 0) return(c(point = abs(mu), var = 0))
+
+  z      <- mu / sigma
+  meanFN <- sigma * sqrt(2 / pi) * exp(-0.5 * z^2) +
+    mu    * (2 * pnorm(z) - 1)
+  varFN  <- mu^2 + var - meanFN^2
+
+  c(point = meanFN, var = varFN)
+}
+
+# ---- lnM wrappers (match examples.R expectations) ------------------------
+get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
+  out <- lnM_delta1_indep(m1, m2, s1, s2, n1, n2)   # returns c(point, var)
+  tibble(
+    yi_lnM_raw = out["point"],
+    vi_lnM_raw = out["var"]
+  )
+}
+
+get_lnM_safe <- function(m1, m2, s1, s2, n1, n2) {
+  out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2)     # returns list(point,var,kept,total)
+  tibble(
+    yi_lnM_safe = out$point,
+    vi_lnM_safe = out$var,
+    draws_kept  = out$kept,
+    draws_total = out$total
+  )
+}
 ```
 
-You can add options to executable code like this
+# Overview
+
+This supplement has two parts:
+
+Part I — Worked examples (Examples 1–2).
+End-to-end demonstration of the lnM workflow in real datasets: compute standardized mean differences, convert to folded-normal magnitudes, then compute lnM using (i) Delta plug-in and (ii) SAFE bootstrap bias-corrected point estimate (SAFE-BC). We then fit multilevel meta-analytic models and produce the same types of figures used in the manuscript.
+
+Part II — Simulation reproduction (Figures + Tables).
+Load the simulation summary .rds and reproduce the manuscript/supplementary figures: point-estimate bias, variance relative bias, coverage, RMSE, and Monte-Carlo error diagnostics (MCSE). We also generate compact tables summarising acceptance rates, failure rates, and “worst offenders”.
+
+
+# Part I — Worked examples
+
+## Example 1 — Almeida nutrition dataset
+
+### Data + effect size
 
 ```{r}
-#| echo: false
-2 * 2
+# data - read in from CSV files
+
+dat <- read_csv(here("data", "data_almeida.csv"), show_col_types = FALSE)
+
+# effect size calculations 
+
+# getting normal d
+dat <-  escalc(measure = "SMD", 
+               m1i = m1i, 
+               m2i = m2i, 
+               sd1i = sd1i, 
+               sd2i = sd2i, 
+               n1i = n1i, 
+               n2i = n2i,
+               data = dat, append = TRUE,
+               var.names = c("yi_d",   "vi_d"))
+
+
+# absolute d
+dat <- dat %>%                               
+  mutate(
+    abs_d   = map2_dfr(yi_d,   vi_d,   ~ {
+      out <- folded_norm(.x, .y)
+      tibble(yi_d_abs   = out["point"], vi_d_abs   = out["var"])
+    })
+  ) %>%                                           # flatten the tibbles
+  unnest(c(abs_d))
+
+
+# lnM
+dat <- dat %>% mutate(
+  lnM_raw = pmap_dfr(
+    list(m1i, m2i, sd1i, sd2i, n1i, n2i),
+    get_lnM_raw)
+) %>% unnest(lnM_raw)
+
+# SAFE is stochastic so set a seed
+set.seed(123)
+
+dat <- dat %>% mutate(
+  lnM_safe = pmap_dfr(
+    list(m1i, m2i, sd1i, sd2i, n1i, n2i),
+    get_lnM_safe)
+) %>% unnest(lnM_safe)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+### How many lnM can be obtained?
+
+```{r}
+#| message: false
+#| warning: false
+
+stopifnot(exists("dat"), is.data.frame(dat))
+
+n_total <- nrow(dat)
+
+summary_tbl <- tibble::tibble(
+  Metric = c(
+    "Total effect sizes",
+    "Delta lnM: point estimate missing",
+    "Delta lnM: sampling variance missing",
+    "SAFE lnM: point estimate missing",
+    "SAFE lnM: sampling variance missing",
+    "Rescued by SAFE (point available when Delta missing)",
+    "Rescued by SAFE (variance available when Delta missing)"
+  ),
+  Count = c(
+    n_total,
+    sum(is.na(dat$yi_lnM_raw)),
+    sum(is.na(dat$vi_lnM_raw)),
+    sum(is.na(dat$yi_lnM_safe)),
+    sum(is.na(dat$vi_lnM_safe)),
+    sum(is.na(dat$yi_lnM_raw) & !is.na(dat$yi_lnM_safe)),
+    sum(is.na(dat$vi_lnM_raw) & !is.na(dat$vi_lnM_safe))
+  )
+) %>%
+  dplyr::mutate(
+    Percent = dplyr::if_else(
+      Metric == "Total effect sizes",
+      NA_real_,
+      100 * Count / n_total
+    )
+  )
+
+# Headline numbers people care about
+n_saved <- sum(!is.na(dat$yi_lnM_safe))
+p_saved <- 100 * n_saved / n_total
+
+cat(sprintf(
+  "\n\n**SAFE produced usable lnM point estimates for %d/%d effect sizes (%.1f%%).**\n\n",
+  n_saved, n_total, p_saved
+))
+
+summary_tbl %>%
+  kableExtra::kable(
+    digits = 1,
+    caption = "Data availability for lnM estimates: Delta plug-in vs SAFE (counts and % of all effect sizes).",
+    align = c("l", "r", "r")
+  ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### Meta-analysis model 
+
+
+```{r}
+# filtering for just condition data
+# just using a part of data
+
+dat_cond <- dat %>% filter(Category == "Condition")
+dim(dat_cond)
+```
+
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+
+# meta-analysis using abs(d)
+
+ma_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  #R = list(Species = corMat.env),
+  #Rscale = 0,
+  data   = dat_cond,
+  method = "REML")
+
+summary(ma_abs)
+i2_ml(ma_abs)
+
+# adding overll to orchard plot
+main <- mod_results(ma_abs, group = "Study")
+main <- unclass(main)
+main$mod_table$name <- "Overall" 
+main$data$moderator <- "Overall"
+class(main) <- "orchard"
+
+p1 <- orchard_plot(main,  xlab = "abs(SMD)", 
+                   group = "Study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+
+p1
+```
+
+### lnM
+
+```{r}
+# meta-analysis using safe
+
+ma_safe <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  #R = list(Species = corMat.env),
+  #Rscale = 0,
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+
+summary(ma_safe)
+i2_ml(ma_safe)
+ml_m1(ma_safe)
+
+
+# adding overll to orchard plot
+main2 <- mod_results(ma_safe, group = "Study")
+main2 <- unclass(main2)
+main2$mod_table$name <- "Overall" 
+main2$data$moderator <- "Overall"
+class(main2) <- "orchard"
+
+
+p2 <- orchard_plot(main2,  xlab = "lnM", 
+                   group = "Study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
+p2
+```
+
+:::
+
+### Meta-regression
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+# meta-regression abs(d)
+mod_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  mods = ~ magnitude + duration + Recovery,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+summary(mod_abs)
+# bubble plot
+p3 <- bubble_plot(mod_abs, mod = "Recovery", 
+                  ylab = "abs(SMD)", 
+                  xlab = "Recovery period", 
+                  group = "Study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+
+p3
+```
+
+### lnM
+
+```{r}
+# meta-regression lnM
+mod_safe <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ magnitude + duration + Recovery,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+
+summary(mod_safe)
+# bubble plot
+p4 <- bubble_plot(mod_safe, mod = "Recovery", 
+                  ylab = "lnM", 
+                  xlab = "Recovery period", 
+                  group = "Study",
+                  legend.pos = "bottom.left") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+```
+
+:::
+
+### Egger regression (publication bias test)
+
+```{r}
+# Creaing a variable using n0
+dat_cond$n0 <- (dat_cond$n1i * dat_cond$n2i) / (dat_cond$n1i + dat_cond$n2i)
+dat_cond$nSE <- 1 / sqrt(dat_cond$n0)
+dat_cond$nV <- 1 / dat_cond$n0
+```
+
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+# using abs(d)
+egger_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+summary(egger_abs)
+# bubble plot
+p5 <- bubble_plot(egger_abs, mod = "nSE", 
+                  ylab = "abs(SMD)", 
+                  xlab = "sqrt(inverse sample size)",
+                  group = "Study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+
+
+p5
+```
+
+### lnM (sqrt(1/n0))
+
+```{r}
+# using safe
+egger_safe <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+summary(egger_safe)
+# bubble plot
+p6 <-bubble_plot(egger_safe, mod = "nSE", 
+                 ylab = "lnM", 
+                 xlab = "sqrt(inverse sample size)", 
+                 group = "Study",
+                 legend.pos = "bottom.right") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
+p6
+
+
+```
+
+### lnM (1/n0)
+
+```{r}
+# equivalent to fitting V rather than SE
+egger_safe2 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ nV,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+summary(egger_safe2)
+# bubble plot
+bubble_plot(egger_safe, mod = "nSE", ylab = "lnM", 
+            xlab = "sqrt(inverse sample size)", group = "Study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+```
+
+
+:::
+
+
+### Sensitivity analysis
+
+```{r}
+# sensitivity analysis - we want to get effect sizes where n1 + n2 = or > 40
+dat_cond_sens <- dat_cond %>% filter((n1i + n2i) >= 40)
+```
+
+
+::: {.panel-tabset}
+
+### lnM: meta-analysis
+
+```{r}
+ma_safe_sens <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond_sens,
+  method = "REML",
+  test = "t")
+
+summary(ma_safe_sens)
+summary(ma_safe)
+
+i2_ml(ma_safe_sens)
+#ml_m1(ma_safe_sens)
+
+orchard_plot(ma_safe_sens,  xlab = "lnM", group = "Study")
+```
+
+### lnM meta-regression
+
+```{r}
+# doing meta-regression again
+# meta-regression lnM
+mod_safe2 <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ magnitude + duration + Recovery + nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+
+summary(mod_safe2)
+r2_ml(mod_safe2)
+
+bubble_plot(mod_safe2, mod = "Recovery", 
+            ylab = "lnM", 
+            xlab = "Recovery period", 
+            group = "Study",
+            legend.pos = "bottom.left") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+```
+
+:::
+
+### Figure 
+
+```{r}
+# making 2 x 3 panel fig
+(p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+```
+
+## Example 2 — Kunc & Schmidt anthropogenic noise dataset
+
+### Data + effect size
+
+```{r}
+data<-read.csv(here("data", "kunc_2019.csv"), na.strings=c("","NA"))
+data<-as.data.frame(data)
+data.2 <-data[which(data$species.latin!="NA"),]                ### exclude cases where no species were provided
+str(data.2)
+
+#  make sd.control and sd.noise numeric
+
+data.2$sd.control<-as.numeric(as.character(data.2$sd.control))
+data.2$sd.noise<-as.numeric(as.character(data.2$sd.noise))
+
+# exclude NA in dat$sd.control
+
+data.2 <- data.2[which(!is.na(data.2$sd.control)),]
+
+# hetro-verion of SMD
+dat <- escalc(measure="SMDH", 
+              m1i=mean.control, sd1i=sd.control, n1i=sample.size.control, 
+              m2i=mean.noise, sd2i=sd.noise,  n2i=sample.size.noise.1,
+              data=data.2,
+              append = TRUE,
+              var.names = c("yi_d",   "vi_d"))
+
+# fitering out NA for yi_d and vi_d
+dat <- dat[which(!is.na(dat$yi_d)),]
+
+dat <- dat %>%                                   # <- your existing data frame
+  mutate(
+    abs_d   = map2_dfr(yi_d,   vi_d,   ~ {
+      out <- folded_norm(.x, .y)
+      tibble(yi_d_abs   = out["point"], vi_d_abs   = out["var"])
+    })
+  ) %>%                                           # flatten the tibbles
+  unnest(c(abs_d))
+
+# lnM
+dat <- dat %>% mutate(
+  lnM_raw = pmap_dfr(
+    list(mean.control, mean.noise, sd.control, sd.noise, sample.size.control, sample.size.noise.1),
+    get_lnM_raw)
+) %>% unnest(lnM_raw)
+
+# SAFE is stochastic so set a seed
+set.seed(123)
+
+dat <- dat %>% mutate(
+  lnM_safe = pmap_dfr(
+    list(mean.control, mean.noise, sd.control, sd.noise, sample.size.control, sample.size.noise.1),
+    get_lnM_safe)
+) %>% unnest(lnM_safe)
+```
+
+### How many lnM can be obtained?
+
+```{r}
+#| label: rescued-summary
+#| message: false
+#| warning: false
+
+stopifnot(exists("dat"), is.data.frame(dat))
+
+n_total <- nrow(dat)
+
+summary_tbl <- tibble::tibble(
+  Metric = c(
+    "Total effect sizes",
+    "Delta lnM: point estimate missing",
+    "Delta lnM: sampling variance missing",
+    "SAFE lnM: point estimate missing",
+    "SAFE lnM: sampling variance missing",
+    "Rescued by SAFE (point available when Delta missing)",
+    "Rescued by SAFE (variance available when Delta missing)"
+  ),
+  Count = c(
+    n_total,
+    sum(is.na(dat$yi_lnM_raw)),
+    sum(is.na(dat$vi_lnM_raw)),
+    sum(is.na(dat$yi_lnM_safe)),
+    sum(is.na(dat$vi_lnM_safe)),
+    sum(is.na(dat$yi_lnM_raw) & !is.na(dat$yi_lnM_safe)),
+    sum(is.na(dat$vi_lnM_raw) & !is.na(dat$vi_lnM_safe))
+  )
+) %>%
+  dplyr::mutate(
+    Percent = dplyr::if_else(
+      Metric == "Total effect sizes",
+      NA_real_,
+      100 * Count / n_total
+    )
+  )
+
+# Headline numbers people care about
+n_saved <- sum(!is.na(dat$yi_lnM_safe))
+p_saved <- 100 * n_saved / n_total
+
+cat(sprintf(
+  "\n\n**SAFE produced usable lnM point estimates for %d/%d effect sizes (%.1f%%).**\n\n",
+  n_saved, n_total, p_saved
+))
+
+summary_tbl %>%
+  kableExtra::kable(
+    digits = 1,
+    caption = "Data availability for lnM estimates: Delta plug-in vs SAFE (counts and % of all effect sizes).",
+    align = c("l", "r", "r")
+  ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### Meta-analysis model 
+
+
+```{r}
+# restrict data just for birds, mammals, amphibians and fish
+dat<-dat[which(dat$taxon.for.plot!="reptilia" & 
+                 dat$taxon.for.plot!="mollusca" & 
+                 dat$taxon.for.plot!="arthropoda"),]
+```
+
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+# meta-analysis using abs(d)
+ma_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(ma_abs)
+i2_ml(ma_abs)
+
+
+# adding overall to orchard plot
+main <- mod_results(ma_abs, group = "study")
+main <- unclass(main)
+main$mod_table$name <- "Overall" 
+main$data$moderator <- "Overall"
+class(main) <- "orchard"
+
+p7 <- orchard_plot(main,  xlab = "abs(SMD)", 
+                   group = "study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+
+p7
+```
+
+### lnM
+
+```{r}
+# meta-analysis using safe
+ma_safe <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(ma_safe)
+i2_ml(ma_safe)
+
+# adding overll to orchard plot
+main2 <- mod_results(ma_safe, group = "study")
+main2 <- unclass(main2)
+main2$mod_table$name <- "Overall" 
+main2$data$moderator <- "Overall"
+class(main2) <- "orchard"
+
+
+p8 <- orchard_plot(main2,  xlab = "lnM", 
+                   group = "study",
+                   trunk.size = 0.8,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
+
+p8
+```
+
+:::
+
+### Meta-regression
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+# meta-regression abs(d) using taxon.for.plot
+mod_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  mods = ~ taxon.for.plot - 1,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(mod_abs)
+# orchard plot
+p9 <- orchard_plot(mod_abs, 
+                   mod = "taxon.for.plot", 
+                   xlab = "abs(SMD)", 
+                   group = "study",
+                   trunk.size = 0.6,
+                   branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#CC6677", 4))
+
+# multiple comparison
+summary(glht(mod_abs, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
+
+p9
+
+```
+
+### lnM
+
+```{r}
+# meta-regression safe using taxon.for.plot
+mod_safe <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ taxon.for.plot -1,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(mod_safe)
+# orchard plot
+p10 <- orchard_plot(mod_safe, 
+                    mod = "taxon.for.plot", 
+                    xlab = "lnM", 
+                    group = "study",
+                    trunk.size = 0.6,
+                    branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
+# multiple comparison
+summary(glht(mod_safe, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
+
+p10
+```
+
+:::
+
+### Egger regression (publication bias test)
+
+```{r}
+# Creaing a variable using n0
+dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1
+                 ) / (dat$sample.size.control + dat$sample.size.noise.1)
+dat$nSE <- 1 / sqrt(dat$n0)
+dat$nV <- 1 / dat$n0
+```
+
+
+::: {.panel-tabset}
+
+### Absulte SMD
+
+```{r}
+# using abs(d)
+egger_abs <- rma.mv(
+  yi   = yi_d_abs, 
+  V    = vi_d_abs,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(egger_abs)
+# bubble plot
+p11 <- bubble_plot(egger_abs, mod = "nSE", 
+                   ylab = "abs(SMD)", 
+                   xlab = "sqrt(inverse sample size)", 
+                   group = "study") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#CC6677") 
+
+p11
+```
+
+### lnM (sqrt(1/n0))
+
+```{r}
+# using safe
+egger_safe <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(egger_safe)
+# bubble plot
+p12 <- bubble_plot(egger_safe, mod = "nSE", 
+                   ylab = "lnM", 
+                   xlab = "sqrt(inverse sample size)", 
+                   group = "study",
+                   legend.pos = "bottom.right") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+
+p12
+```
+
+### lnM (1/n0)
+
+```{r}
+# equivalent to fitting V rather than SE
+egger_safe2 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ nV,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(egger_safe2)
+# bubble plot
+bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "study")
+```
+
+
+:::
+
+
+### Sensitivity analysis
+
+```{r}
+# sensitivity analysis - we want to get effect sizes where n1 + n2 = or > 40
+dat_sens <- dat %>% filter((sample.size.control + sample.size.noise.1) >= 40)
+```
+
+
+::: {.panel-tabset}
+
+### lnM: meta-analysis
+
+```{r}
+ma_safe_sens <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat_sens,
+  method = "REML",
+  test = "t")
+
+summary(ma_safe_sens)
+summary(ma_safe)
+
+i2_ml(ma_safe_sens)
+
+orchard_plot(ma_safe_sens,  xlab = "lnM", group = "study")
+```
+
+### lnM meta-regression
+
+```{r}
+# doing meta-regression again
+# meta-regression safe using taxon.for.plot
+mod_safe2 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ taxon.for.plot - 1 + nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat,
+  method = "REML",
+  test = "t")
+summary(mod_safe2)
+# comparing
+summary(mod_safe)
+
+r2_ml(mod_safe2)
+
+results <- mod_results(mod_safe2, 
+                       group = "study", 
+                       mod = "taxon.for.plot", 
+                       at = list(nSE = c(0)))
+
+# orchard plot
+# probably closer to the truth
+orchard_plot(results, 
+                    mod = "taxon.for.plot", 
+                    xlab = "lnM", 
+                    group = "study",
+                    trunk.size = 0.6,
+                    branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
+```
+
+
+### lnM Egger regression
+
+```{r}
+# sensivity + nSE - even smaller
+
+mod_safe3 <- rma.mv(
+  yi   = yi_lnM_safe,
+  V    = vi_lnM_safe,
+  mods = ~ taxon.for.plot - 1 + nSE,
+  random =  list(
+    ~ 1 | study,
+    ~ 1 |case.nr
+  ),
+  data   = dat_sens,
+  method = "REML",
+  test = "t")
+summary(mod_safe3)
+
+
+r2_ml(mod_safe3)
+
+results2 <- mod_results(mod_safe3, 
+                       group = "study", 
+                       mod = "taxon.for.plot", 
+                       at = list(nSE = c(0)))
+
+# orchard plot
+# probably closer to the truth
+orchard_plot(results2, 
+             mod = "taxon.for.plot", 
+             xlab = "lnM", 
+             group = "study",
+             trunk.size = 0.6,
+             branch.size = 5) +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = rep("#117733", 4)) 
+
+```
+
+
+:::
+
+### Figure 4
+
+```{r}
+# making 2 x 3 panel fig
+(p7 + p8) / (p9 + p10) / (p11 + p12) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+```
+
+# Part II — Simulation reproduction (figures + tables)
+
+## Figures
+
+### Load summary results
+
+```{r}
+#| label: sim-load
+
+# to do
+
+results <- readRDS( here::here("results", "lnM_summary_SAFEfun_2025-12-21.rds"))
+
+results <- results %>%
+    mutate(facet_label = paste0(design, " n1=", n1, " n2=", n2))
+
+facet_info <- results %>% distinct(facet_label, design, n1, n2)
+
+balanced_ind <- facet_info %>%
+    filter(design == "indep", n1 == n2) %>% arrange(n1) %>% pull(facet_label)
+unbalanced_ind <- facet_info %>%
+    filter(design == "indep", n1 != n2) %>% arrange(n1) %>% pull(facet_label)
+paired_balanced <- facet_info %>%
+    filter(design == "paired") %>% arrange(n1) %>% pull(facet_label)
+
+new_levels <- c(balanced_ind, unbalanced_ind, paired_balanced)
+results <- results %>% mutate(facet_label = factor(facet_label, levels = new_levels))
+
+strip_labeller <- function(x) gsub(" n1=", "   n1=", gsub(" n2=", "   n2=", x))
+
+base_theme <- theme_bw(11) +
+    theme(
+      legend.title = element_text(),
+      legend.position = "right",
+      strip.background = element_rect(fill = "grey85", colour = "grey40"),
+      strip.text = element_text(face = "plain"),
+      panel.grid.minor = element_blank()
+)
+```
+
+### Figure 1 — Bias of point estimates
+
+```{r}
+#| label: fig1-bias
+#| fig-cap: "Figure 1. Point-estimate bias (estimate − true lnM). Dashed line indicates 0 bias."
+
+if (exists("results")) {
+
+  bias_df <- dplyr::bind_rows(
+    results %>% dplyr::select(theta, facet_label, delta_bias) %>%
+      dplyr::rename(bias = delta_bias) %>% dplyr::mutate(estimator = "PI"),
+    results %>% dplyr::select(theta, facet_label, safe_bias) %>%
+      dplyr::rename(bias = safe_bias) %>% dplyr::mutate(estimator = "SAFE")
+  )
+
+  ggplot(bias_df, aes(theta, bias, colour = estimator, group = estimator)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+               labeller = labeller(facet_label = strip_labeller)) +
+    labs(x = expression(theta),
+         y = "Bias (estimate − true lnM)",
+         colour = "estimator") +
+    base_theme +
+    annotate("text", x = 0.7, y = max(bias_df$bias, na.rm = TRUE),
+             label = "Target: 0 bias\nBias typically shrinks\nas θ and n increase",
+             hjust = 0, vjust = 1, size = 3, colour = "grey25")
+}
+```
+
+### Figure 2 — Relative bias of variance estimates
+
+```{r}
+#| label: fig2-relbias-var
+#| fig-cap: "Figure 2. Relative bias of variance estimates (%). Dashed line indicates 0% (unbiased)."
+
+if (exists("results")) {
+
+  rb_df <- dplyr::bind_rows(
+    results %>% dplyr::select(theta, facet_label, relbias_delta) %>%
+      dplyr::rename(relbias = relbias_delta) %>% dplyr::mutate(estimator = "Delta"),
+    results %>% dplyr::select(theta, facet_label, relbias_safe) %>%
+      dplyr::rename(relbias = relbias_safe)  %>% dplyr::mutate(estimator = "SAFE")
+  )
+
+  ggplot(rb_df, aes(theta, relbias, colour = estimator, group = estimator)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+               labeller = labeller(facet_label = strip_labeller)) +
+    labs(x = expression(theta),
+         y = "Relative bias of Var (%)",
+         colour = "estimator") +
+    base_theme +
+    annotate("text", x = 0.7, y = max(rb_df$relbias, na.rm = TRUE),
+             label = "+: Var too large (conservative)\n−: Var too small (anti-conservative)",
+             hjust = 0, vjust = 1, size = 3, colour = "grey25")
+}
+```
+
+### Figure S1 — Coverage of nominal 95% intervals
+
+```{r}
+#| label: figS1-coverage
+#| fig-cap: "Figure S1. Empirical coverage of nominal 95% intervals. Dashed line indicates 0.95."
+
+if (exists("results")) {
+
+  cov_df <- dplyr::bind_rows(
+    results %>% transmute(theta, facet_label, estimator = "PI",   cover = cover_delta),
+    results %>% transmute(theta, facet_label, estimator = "SAFE", cover = cover_safe)
+  )
+
+  ggplot(cov_df, aes(theta, cover, colour = estimator, group = estimator)) +
+    geom_hline(yintercept = 0.95, linetype = "dashed", colour = "grey50") +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+               labeller = labeller(facet_label = strip_labeller)) +
+    labs(x = expression(theta),
+         y = "Empirical coverage",
+         colour = "estimator") +
+    base_theme +
+    annotate("text", x = 0.7, y = 0.99,
+             label = "Target: 0.95\nBelow = under-coverage\nAbove = conservative",
+             hjust = 0, vjust = 1, size = 3, colour = "grey25")
+}
+```
+
+### Figure S2 — RMSE of point estimates
+
+```{r}
+#| label: figS2-rmse
+#| fig-cap: "Figure S2. RMSE of point estimates. Lower values indicate better overall accuracy."
+
+if (exists("results")) {
+
+  rmse_df <- dplyr::bind_rows(
+    results %>% transmute(theta, facet_label, estimator = "PI",   rmse = rmse_delta),
+    results %>% transmute(theta, facet_label, estimator = "SAFE", rmse = rmse_safe)
+  )
+
+  ggplot(rmse_df, aes(theta, rmse, colour = estimator, group = estimator)) +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~ facet_label, ncol = 4, nrow = 3,
+               labeller = labeller(facet_label = strip_labeller)) +
+    labs(x = expression(theta),
+         y = expression(RMSE~"("~hat(lnM)~"\u2212"~lnM~")"),
+         colour = "estimator") +
+    base_theme +
+    annotate("text", x = 0.7, y = max(rmse_df$rmse, na.rm = TRUE),
+             label = "RMSE combines\nbias + variance",
+             hjust = 0, vjust = 1, size = 3, colour = "grey25")
+}
+```
+
+
+### Figure S3 — MCSE of bias from raw_runs/
+
+```{r}
+#| label: figS3-mcse-bias
+#| fig-cap: "Figure S3. MCSE of bias (per grid cell) reconstructed from replicate-level files in raw_runs."
+
+raw_dir <- here("raw_runs")
+raw_files <- list.files(raw_dir, pattern = "^row_[0-9]{3}\\.rds$", full.names = TRUE)
+if (!length(raw_files)) stop("No raw files found in: ", raw_dir)
+
+row_index_from_path <- function(p) as.integer(sub("^row_([0-9]{3})\\.rds$", "\\1", basename(p)))
+
+# Compute diagnostics for a single grid cell (single raw_df)
+one_raw_diag <- function(raw_df) {
+  
+  # Defensive: remove rep id if present (rep is not used in computations)
+  if ("rep" %in% names(raw_df)) raw_df <- raw_df %>% dplyr::select(-rep)
+  
+  # Match the “ok_d” logic used in the simulation summary:
+  # keep only replicates where Delta-method pt & var are defined and var>0
+  ok_d <- is.finite(raw_df$delta_pt) & is.finite(raw_df$delta_var) & (raw_df$delta_var > 0)
+  
+  # If nothing survives the ok_d filter, return NAs
+  if (!any(ok_d)) {
+    return(data.frame(
+      n_ok_d = 0L,
+      n_ok_safe = 0L,
+      RSE_VarMC_SAFEpt = NA_real_,
+      sd_PI = NA_real_,
+      sd_SAFE = NA_real_
+    ))
+  }
+  
+  df_ok <- raw_df[ok_d, , drop = FALSE]
+  
+  # Within the ok_d subset, check how many finite SAFE-BC point estimates exist
+  ok_safe_pt <- is.finite(df_ok$safe_pt)
+  n_ok_safe <- sum(ok_safe_pt)
+  
+  # Relative standard error (RSE) of the MC variance estimate of SAFE-BC point:
+  #   RSE(Var_hat) approx sqrt(2/(n-1)) for sample variance under normality
+  RSE_varmc <- if (n_ok_safe >= 3) sqrt(2 / (n_ok_safe - 1)) else NA_real_
+  
+  # SD of point estimates (needed for MCSE(bias) below)
+  # Since true_lnM is constant within a grid cell, sd(est - true) = sd(est).
+  sd_PI   <- sd(df_ok$delta_pt, na.rm = TRUE)
+  sd_SAFE <- sd(df_ok$safe_pt,  na.rm = TRUE)
+  
+  data.frame(
+    n_ok_d = nrow(df_ok),
+    n_ok_safe = n_ok_safe,
+    RSE_VarMC_SAFEpt = RSE_varmc,
+    sd_PI = sd_PI,
+    sd_SAFE = sd_SAFE
+  )
+}
+
+diag_list <- pbapply::pblapply(raw_files, function(f) {
+  rid <- row_index_from_path(f)
+  raw_df <- readRDS(f)
+  d <- one_raw_diag(raw_df)
+  d$row_id <- rid
+  d
+})
+
+diag_df <- bind_rows(diag_list)
+
+results2 <- results %>%
+  mutate(row_id = seq_len(nrow(results))) %>%
+  left_join(diag_df, by = "row_id")
+
+# Recompute MCSE(bias) “from disk”:
+#   MCSE(bias) ≈ sd(estimator)/sqrt(n_eff)
+# where n_eff matches the number of usable replicates in each grid cell.
+results2 <- results2 %>%
+  mutate(
+    mcse_bias_PI_disk   = ifelse(is.finite(sd_PI)   & n_ok_d >= 2,    sd_PI   / sqrt(n_ok_d),     NA_real_),
+    mcse_bias_SAFE_disk = ifelse(is.finite(sd_SAFE) & n_ok_safe >= 2, sd_SAFE / sqrt(n_ok_safe),  NA_real_)
+  )
+
+mc_long <- results2 %>%
+  transmute(
+    theta, facet_label,
+    mcse_bias_PI   = mcse_bias_PI_disk,
+    mcse_bias_SAFE = mcse_bias_SAFE_disk
+  ) %>%
+  pivot_longer(
+    cols = c(mcse_bias_PI, mcse_bias_SAFE),
+    names_to = "metric", values_to = "value"
+  )
+
+p_mc <- ggplot(mc_long, aes(theta, value, colour = metric, group = metric)) +
+  geom_line() +
+  facet_wrap(~ facet_label, ncol = 4) +
+  labs(
+    x = expression(theta),
+    y = "MCSE of bias",
+    title = "Monte-Carlo error diagnostics: MCSE of bias (per grid cell; from raw_runs)"
+  ) +
+  base_theme + 
+  theme(legend.position = "bottom")
+
+print(p_mc)
+```
+
+### Figure S4 — MCSE of mean variance estimates (from summary)
+
+```{r}
+#| label: figS4-mcse-varmean
+#| fig-cap: "Figure S4. MCSE of mean variance estimates (from the simulation summary)."
+
+var_mcse_df <- results %>%
+  transmute(theta, facet_label,
+            PI_var_MCSE   = mcse_varbar_delta,
+            SAFE_var_MCSE = mcse_varbar_safe) %>%
+  pivot_longer(cols = c(PI_var_MCSE, SAFE_var_MCSE),
+               names_to = "estimator", values_to = "mcse") %>%
+  mutate(estimator = recode(estimator,
+                            PI_var_MCSE   = "PI (delta-var)",
+                            SAFE_var_MCSE = "SAFE (safe-var)"))
+
+p_var_mcse <- ggplot(var_mcse_df, aes(theta, mcse, colour = estimator, group = estimator)) +
+  geom_line() +
+  facet_wrap(~ facet_label, ncol = 4) +
+  labs(x = expression(theta),
+       y = "MCSE of mean(variance estimate)",
+       colour = NULL,
+       title = "Monte-Carlo error of variance estimators (MCSE of the mean)") +
+  base_theme + 
+  theme(legend.position = "bottom")
+
+print(p_var_mcse)
+```
+
+
+## Tables for the supplement
+
+This section creates compact tables you can paste directly into your HTML supplement.
+
+### Table 1 —Method feasibility / stability by facet
+
+```{r}
+tab1_stability <- results %>%
+  group_by(design, n1, n2, facet_label) %>%
+  summarise(
+    theta_min = min(theta, na.rm = TRUE),
+    theta_max = max(theta, na.rm = TRUE),
+    
+    # "how often do we fail?"
+    delta_fail_median = median(delta_fail_prop, na.rm = TRUE),
+    safe_fail_median  = median(safe_fail_prop,  na.rm = TRUE),
+    
+    # "how often does SAFE return ok status?"
+    SAFE_ok_median    = median(SAFE_ok_rate, na.rm = TRUE),
+    
+    # "how often does Delta variance get capped?"
+    delta_cap_median  = median(delta_cap_rate, na.rm = TRUE),
+    
+    # also show worst-case over theta (useful for identifying boundary regions)
+    delta_fail_max = max(delta_fail_prop, na.rm = TRUE),
+    safe_fail_max  = max(safe_fail_prop,  na.rm = TRUE),
+    delta_cap_max  = max(delta_cap_rate,  na.rm = TRUE),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(factor(facet_label, levels = levels(results$facet_label))) %>%
+  mutate(
+    design = as.character(design),
+    facet_label = as.character(facet_label)
+  )
+
+kable(tab1_stability, digits = 3,
+      caption = "Table 1. Feasibility / stability diagnostics summarised across θ within each design × (n1,n2) facet.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Table 2 — SAFE bootstrap acceptance (kept/tried) 
+
+```{r}
+tab2_accept <- results %>%
+  group_by(design, n1, n2, facet_label) %>%
+  summarise(
+    q0  = quantile(boot_accept_prop, 0.00, na.rm = TRUE),
+    q25 = quantile(boot_accept_prop, 0.25, na.rm = TRUE),
+    q50 = quantile(boot_accept_prop, 0.50, na.rm = TRUE),
+    q75 = quantile(boot_accept_prop, 0.75, na.rm = TRUE),
+    q100= quantile(boot_accept_prop, 1.00, na.rm = TRUE),
+    mean = mean(boot_accept_prop, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(factor(facet_label, levels = levels(results$facet_label)))
+
+kable(tab2_accept, digits = 4,
+      caption = "Table 2. SAFE acceptance rate (kept/tried) summarised across θ for each facet. Quantiles highlight worst-case acceptance.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Table 3 —  Worst offenders (grid-cell level)
+
+```{r}
+tab3_low_accept <- results %>%
+  dplyr::select(design, n1, n2, theta, facet_label, boot_accept_prop, SAFE_ok_rate) %>%
+  arrange(boot_accept_prop) %>%
+  head(20)
+
+tab3_high_cap <- results %>%
+  dplyr::select(design, n1, n2, theta, facet_label, delta_cap_rate, maxVar) %>%
+  arrange(desc(delta_cap_rate)) %>%
+  head(20)
+
+tab3_fail <- results %>%
+  dplyr::select(design, n1, n2, theta, facet_label, delta_fail_prop, safe_fail_prop, SAFE_ok_rate) %>%
+  mutate(worst_fail = pmax(delta_fail_prop, safe_fail_prop, na.rm = TRUE)) %>%
+  arrange(desc(worst_fail)) %>%
+  dplyr::select(-worst_fail) %>%
+  head(20)
+
+kable(tab3_low_accept, digits = 4,
+      caption = "Table 3A. Lowest SAFE acceptance grid cells (smallest kept/tried).") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+
+kable(tab3_high_cap, digits = 3,
+      caption = "Table 3B. Highest Delta variance capping rates (fraction of replicates capped).") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+
+kable(tab3_fail, digits = 3,
+      caption = "Table 3C. Highest failure rates (PI undefined and/or SAFE-BC undefined).") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+```
+
+### Table 4 — MCSE diagnostics (run-computed)
+
+```{r}
+
+has_mcse_bias <- all(c("mcse_bias_delta","mcse_bias_safe") %in% names(results))
+
+tab4_mcse <- results %>%
+  group_by(design, n1, n2, facet_label) %>%
+  summarise(
+    # bias MCSE (optional)
+    mcse_bias_PI_max   = if (has_mcse_bias) max(mcse_bias_delta, na.rm = TRUE) else NA_real_,
+    mcse_bias_SAFE_max = if (has_mcse_bias) max(mcse_bias_safe,  na.rm = TRUE) else NA_real_,
+    
+    # variance MCSE (these are in your results)
+    mcse_var_PI_max    = max(mcse_varbar_delta, na.rm = TRUE),
+    mcse_var_SAFE_max  = max(mcse_varbar_safe,  na.rm = TRUE),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(factor(facet_label, levels = levels(results$facet_label)))
+
+kable(tab4_mcse, digits = 5,
+      caption = "Table 4. Monte-Carlo precision (max MCSE over θ within each facet).") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+
+```
+
+
+# Session info
+```{r}
+#| label: session-info
+sessionInfo()
+```
+

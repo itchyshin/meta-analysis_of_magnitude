@@ -332,7 +332,7 @@ safe_lnM_dep <- function(x1bar, x2bar, s1, s2, n, r,
                   r * s1 * s2, s2^2), 2, 2)
   
   lnM_star <- numeric(0L)
-  total <- 0L
+  total <- 0L
   kept  <- 0L
   attempts <- 0L
   zero_streak <- 0L

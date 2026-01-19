@@ -291,9 +291,9 @@ p6 <-bubble_plot(egger_safe, mod = "nSE",
   scale_colour_manual(values = rep("grey20",8)) +
   scale_fill_manual(values = "#117733") 
 
-
+# equivalent to fitting V rather than SE
 egger_safe2 <- rma.mv(
-  yi   = yi_lnM_safe, 
+  yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
   mods = ~ nV,
   random =  list(
