@@ -417,7 +417,7 @@ print(p_var_mcse)
 # print(p_var_mcse_log)
 
 # ================================================================
-# Table 1: Method feasibility / stability by facet (summarised over theta)
+# Table S1: Method feasibility / stability by facet (summarised over theta)
 # Columns:
 #   - delta_fail_prop: PI undefined rate
 #   - safe_fail_prop:  SAFE-BC undefined rate
@@ -459,7 +459,7 @@ kable(tab1_stability, digits = 3,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 
 # ================================================================
-# Table 2: SAFE bootstrap acceptance (kept/tried) by facet (summarised over theta)
+# Table S2: SAFE bootstrap acceptance (kept/tried) by facet (summarised over theta)
 # boot_accept_prop is already kept/tried aggregated across MC reps in each grid cell.
 # We summarise across theta to get a compact facet-level picture.
 # ================================================================
@@ -482,43 +482,7 @@ kable(tab2_accept, digits = 4,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 
 # ================================================================
-# Table 3: Worst offenders (grid-cell level)
-#   A) lowest acceptance
-#   B) highest delta cap rate
-#   C) highest failure rates
-# ================================================================
-
-tab3_low_accept <- results %>%
-  dplyr::select(design, n1, n2, theta, facet_label, boot_accept_prop, SAFE_ok_rate) %>%
-  arrange(boot_accept_prop) %>%
-  head(20)
-
-tab3_high_cap <- results %>%
-  dplyr::select(design, n1, n2, theta, facet_label, delta_cap_rate, maxVar) %>%
-  arrange(desc(delta_cap_rate)) %>%
-  head(20)
-
-tab3_fail <- results %>%
-  dplyr::select(design, n1, n2, theta, facet_label, delta_fail_prop, safe_fail_prop, SAFE_ok_rate) %>%
-  mutate(worst_fail = pmax(delta_fail_prop, safe_fail_prop, na.rm = TRUE)) %>%
-  arrange(desc(worst_fail)) %>%
-  dplyr::select(-worst_fail) %>%
-  head(20)
-
-kable(tab3_low_accept, digits = 4,
-      caption = "Table 3A. Lowest SAFE acceptance grid cells (smallest kept/tried).") %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
-
-kable(tab3_high_cap, digits = 3,
-      caption = "Table 3B. Highest Delta variance capping rates (fraction of replicates capped).") %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
-
-kable(tab3_fail, digits = 3,
-      caption = "Table 3C. Highest failure rates (PI undefined and/or SAFE-BC undefined).") %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
-
-# ================================================================
-# Table 4: MCSE diagnostics (run-computed) by facet
+# Table S3: MCSE diagnostics (run-computed) by facet
 # Uses:
 #   - mcse_bias_delta, mcse_bias_safe (if present in your results file)
 #   - mcse_varbar_delta, mcse_varbar_safe (present)
