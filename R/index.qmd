@@ -1062,9 +1062,7 @@ base_theme <- theme_bw(11) +
 #| label: fig1-bias
 #| fig-cap: "Figure 1. Point-estimate bias (estimate − true lnM). Dashed line indicates 0 bias."
 
-if (exists("results")) {
-
-  bias_df <- dplyr::bind_rows(
+bias_df <- dplyr::bind_rows(
     results %>% dplyr::select(theta, facet_label, delta_bias) %>%
       dplyr::rename(bias = delta_bias) %>% dplyr::mutate(estimator = "PI"),
     results %>% dplyr::select(theta, facet_label, safe_bias) %>%
@@ -1079,11 +1077,11 @@ if (exists("results")) {
     labs(x = expression(theta),
          y = "Bias (estimate − true lnM)",
          colour = "estimator") +
-    base_theme +
-    annotate("text", x = 0.7, y = max(bias_df$bias, na.rm = TRUE),
-             label = "Target: 0 bias\nBias typically shrinks\nas θ and n increase",
-             hjust = 0, vjust = 1, size = 3, colour = "grey25")
-}
+    base_theme + 
+  theme(legend.position = "bottom")#+
+   # annotate("text", x = 0.7, y = max(bias_df$bias, na.rm = TRUE),
+   #          label = "Target: 0 bias\nBias typically shrinks\nas θ and n increase",
+   #          hjust = 0, vjust = 1, size = 3, colour = "grey25")
 ```
 
 ### Figure 2 — Relative bias of variance estimates
@@ -1092,9 +1090,9 @@ if (exists("results")) {
 #| label: fig2-relbias-var
 #| fig-cap: "Figure 2. Relative bias of variance estimates (%). Dashed line indicates 0% (unbiased)."
 
-if (exists("results")) {
 
-  rb_df <- dplyr::bind_rows(
+
+rb_df <- dplyr::bind_rows(
     results %>% dplyr::select(theta, facet_label, relbias_delta) %>%
       dplyr::rename(relbias = relbias_delta) %>% dplyr::mutate(estimator = "Delta"),
     results %>% dplyr::select(theta, facet_label, relbias_safe) %>%
@@ -1109,11 +1107,11 @@ if (exists("results")) {
     labs(x = expression(theta),
          y = "Relative bias of Var (%)",
          colour = "estimator") +
-    base_theme +
-    annotate("text", x = 0.7, y = max(rb_df$relbias, na.rm = TRUE),
-             label = "+: Var too large (conservative)\n−: Var too small (anti-conservative)",
-             hjust = 0, vjust = 1, size = 3, colour = "grey25")
-}
+    base_theme + 
+  theme(legend.position = "bottom")#+
+    #annotate("text", x = 0.7, y = max(rb_df$relbias, na.rm = TRUE),
+    #         label = "+: Var too large (conservative)\n−: Var too small (anti-conservative)",
+    #         hjust = 0, vjust = 1, size = 3, colour = "grey25")
 ```
 
 ### Figure S1 — Coverage of nominal 95% intervals
@@ -1122,9 +1120,7 @@ if (exists("results")) {
 #| label: figS1-coverage
 #| fig-cap: "Figure S1. Empirical coverage of nominal 95% intervals. Dashed line indicates 0.95."
 
-if (exists("results")) {
-
-  cov_df <- dplyr::bind_rows(
+cov_df <- dplyr::bind_rows(
     results %>% transmute(theta, facet_label, estimator = "PI",   cover = cover_delta),
     results %>% transmute(theta, facet_label, estimator = "SAFE", cover = cover_safe)
   )
@@ -1137,11 +1133,12 @@ if (exists("results")) {
     labs(x = expression(theta),
          y = "Empirical coverage",
          colour = "estimator") +
-    base_theme +
-    annotate("text", x = 0.7, y = 0.99,
-             label = "Target: 0.95\nBelow = under-coverage\nAbove = conservative",
-             hjust = 0, vjust = 1, size = 3, colour = "grey25")
-}
+    base_theme + 
+  theme(legend.position = "bottom")#+
+    #annotate("text", x = 0.7, y = 0.99,
+    #         label = "Target: 0.95\nBelow = under-coverage\nAbove = conservative",
+    #        hjust = 0, vjust = 1, size = 3, colour = "grey25")
+
 ```
 
 ### Figure S2 — RMSE of point estimates
@@ -1150,9 +1147,8 @@ if (exists("results")) {
 #| label: figS2-rmse
 #| fig-cap: "Figure S2. RMSE of point estimates. Lower values indicate better overall accuracy."
 
-if (exists("results")) {
 
-  rmse_df <- dplyr::bind_rows(
+rmse_df <- dplyr::bind_rows(
     results %>% transmute(theta, facet_label, estimator = "PI",   rmse = rmse_delta),
     results %>% transmute(theta, facet_label, estimator = "SAFE", rmse = rmse_safe)
   )
@@ -1164,20 +1160,16 @@ if (exists("results")) {
     labs(x = expression(theta),
          y = expression(RMSE~"("~hat(lnM)~"\u2212"~lnM~")"),
          colour = "estimator") +
-    base_theme +
-    annotate("text", x = 0.7, y = max(rmse_df$rmse, na.rm = TRUE),
-             label = "RMSE combines\nbias + variance",
-             hjust = 0, vjust = 1, size = 3, colour = "grey25")
-}
+    base_theme + 
+  theme(legend.position = "bottom")#+
+   #annotate("text", x = 0.7, y = max(rmse_df$rmse, na.rm = TRUE),
+    #         label = "RMSE combines\nbias + variance",
+    #         hjust = 0, vjust = 1, size = 3, colour = "grey25")
 ```
 
-
-### Figure S3 — MCSE of bias from raw_runs/
+### Reading in data for Monte Carlo (MC) standard error (SE)
 
 ```{r}
-#| label: figS3-mcse-bias
-#| fig-cap: "Figure S3. MCSE of bias (per grid cell) reconstructed from replicate-level files in raw_runs."
-
 raw_dir <- here("raw_runs")
 raw_files <- list.files(raw_dir, pattern = "^row_[0-9]{3}\\.rds$", full.names = TRUE)
 if (!length(raw_files)) stop("No raw files found in: ", raw_dir)
@@ -1243,7 +1235,16 @@ results2 <- results %>%
   mutate(row_id = seq_len(nrow(results))) %>%
   left_join(diag_df, by = "row_id")
 
-# Recompute MCSE(bias) “from disk”:
+```
+
+
+### Figure S3 — MCSE of bias from raw_runs
+
+```{r}
+#| label: figS3-mcse-bias
+#| fig-cap: "Figure S3. MCSE of bias (per grid cell) reconstructed from replicate-level files in raw_runs."
+
+# Recompute MCSE(bias) “:
 #   MCSE(bias) ≈ sd(estimator)/sqrt(n_eff)
 # where n_eff matches the number of usable replicates in each grid cell.
 results2 <- results2 %>%
