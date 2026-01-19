@@ -1,6 +1,6 @@
 ---
 title: "Supplementary Tutorial: lnM"
-subtitle: "Worked examples + full simulation reproduction (figures + tables)"
+subtitle: "Worked examples + extra results from the simulation (figures + tables)"
 author: "TBA"
 format:
   html:
