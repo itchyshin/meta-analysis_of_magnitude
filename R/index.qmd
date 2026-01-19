@@ -1,6 +1,7 @@
 ---
-title: "Supplementary Tutorial: lnM (Delta plug-in vs SAFE-BC)"
+title: "Supplementary Tutorial: lnM"
 subtitle: "Worked examples + full simulation reproduction (figures + tables)"
+author: "TBA"
 format:
   html:
     toc: true
