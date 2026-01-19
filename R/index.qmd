@@ -2,15 +2,31 @@
 title: "Supplementary Tutorial: lnM"
 subtitle: "Worked examples + extra results from the simulation (figures + tables)"
 author: "TBA"
-format:
+format: 
   html:
     toc: true
-    toc-depth: 3
-    number-sections: true
-    code-fold: false
-    code-tools: true
-    theme: cosmo
-    highlight-style: github
+    toc-location: left
+    toc-depth: 6
+    toc-float: false
+    toc-title: "**CONTENTS**"
+    output-file: "index.html"
+    embed-resources: true
+    # code-fold: true
+    code-tools: 
+      source: false
+    number-sections: false
+    # bibliography: ./bib/ref.bib
+    fontsize: "12"
+    mainfont: "Roboto"
+    monofont: "Roboto"
+    # fontcolor: ""
+    page-layout: full
+    code-overflow: wrap
+    df_print: paged
+    theme: united
+    code-line-numbers: false
+    # grid:
+    #   margin-width: 190px
 execute:
   echo: true
   warning: false
