@@ -238,8 +238,6 @@ ma_abs <- rma.mv(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
-  #R = list(Species = corMat.env),
-  #Rscale = 0,
   data   = dat_cond,
   method = "REML")
 
@@ -275,8 +273,6 @@ ma_safe <- rma.mv(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
-  #R = list(Species = corMat.env),
-  #Rscale = 0,
   data   = dat_cond,
   method = "REML",
   test = "t")
@@ -527,7 +523,7 @@ bubble_plot(mod_safe2, mod = "Recovery",
 
 :::
 
-### Figure 
+### Figure 3
 
 ```{r}
 # making 2 x 3 panel fig
@@ -1312,7 +1308,7 @@ print(p_var_mcse)
 
 This section creates compact tables you can paste directly into your HTML supplement.
 
-### Table 1 —Method feasibility / stability by facet
+### Table S1 — Method feasibility / stability by facet
 
 ```{r}
 tab1_stability <- results %>%
@@ -1349,7 +1345,7 @@ kable(tab1_stability, digits = 3,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-### Table 2 — SAFE bootstrap acceptance (kept/tried) 
+### Table S2 — SAFE bootstrap acceptance (kept/tried) 
 
 ```{r}
 tab2_accept <- results %>%
@@ -1370,7 +1366,7 @@ kable(tab2_accept, digits = 4,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-### Table 3 —  Worst offenders (grid-cell level)
+### Table S3 —  Worst offenders (grid-cell level)
 
 ```{r}
 tab3_low_accept <- results %>%
@@ -1403,7 +1399,7 @@ kable(tab3_fail, digits = 3,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
 ```
 
-### Table 4 — MCSE diagnostics (run-computed)
+### Table S4 — MCSE diagnostics (run-computed)
 
 ```{r}
 
