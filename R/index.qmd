@@ -1316,6 +1316,7 @@ TODO - requires explanations - and what table column means
 tab1_stability <- results %>%
   group_by(design, n1, n2, facet_label) %>%
   summarise(
+    # at which theta we can define lnM given sample sizes
     theta_min = min(theta, na.rm = TRUE),
     theta_max = max(theta, na.rm = TRUE),
     
@@ -1343,7 +1344,7 @@ tab1_stability <- results %>%
   )
 
 kable(tab1_stability, digits = 3,
-      caption = "Table 1. Feasibility / stability diagnostics summarised across θ within each design × (n1,n2) facet.") %>%
+      caption = "Table S1. Feasibility / stability diagnostics summarised across θ within each design × (n1,n2) facet.") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
@@ -1364,7 +1365,7 @@ tab2_accept <- results %>%
   arrange(factor(facet_label, levels = levels(results$facet_label)))
 
 kable(tab2_accept, digits = 4,
-      caption = "Table 2. SAFE acceptance rate (kept/tried) summarised across θ for each facet. Quantiles highlight worst-case acceptance.") %>%
+      caption = "Table S2. SAFE acceptance rate (kept/tried) summarised across θ for each facet. Quantiles highlight worst-case acceptance.") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
@@ -1374,7 +1375,7 @@ kable(tab2_accept, digits = 4,
 
 has_mcse_bias <- all(c("mcse_bias_delta","mcse_bias_safe") %in% names(results))
 
-tab4_mcse <- results %>%
+tab3_mcse <- results %>%
   group_by(design, n1, n2, facet_label) %>%
   summarise(
     # bias MCSE (optional)
@@ -1389,8 +1390,8 @@ tab4_mcse <- results %>%
   ) %>%
   arrange(factor(facet_label, levels = levels(results$facet_label)))
 
-kable(tab4_mcse, digits = 5,
-      caption = "Table 4. Monte-Carlo precision (max MCSE over θ within each facet).") %>%
+kable(tab3_mcse, digits = 5,
+      caption = "Table S3. Monte-Carlo precision (max MCSE over θ within each facet).") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
 
 ```
