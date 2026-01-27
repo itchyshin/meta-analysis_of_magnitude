@@ -6,12 +6,15 @@ format:
   html:
     toc: true
     toc-location: left
-    toc-depth: 6
+    toc-depth: 3
+    fig-dpi: 300
     toc-float: false
     toc-title: "**CONTENTS**"
     output-file: "index.html"
     embed-resources: true
-    # code-fold: true
+    code-fold: true
+    smooth-scroll: true
+    anchor-sections: true
     code-tools: 
       source: false
     number-sections: false
@@ -274,7 +277,7 @@ dim(dat_cond)
 ::: panel-tabset
 ## Absulte SMD (folded-normal magnitude)
 
-This model summarizes the typical *magnitude* of effects using the folded-normal transformation of SMD. Note that this is not equivalent to taking \|SMD\|; it uses the implied folded-normal distribution to reduce the upward bias introduced by absolute values.
+This model summarizes the typical *magnitude* of effects using the folded-normal transformation of SMD. Note that this is not equivalent to taking |SMD|; it uses the implied folded-normal distribution to reduce the upward bias introduced by absolute values.
 
 ```{r}
 # label: ma-abs-smd
@@ -606,12 +609,46 @@ i2_ml(ma_safe_sens)
 orchard_plot(ma_safe_sens,  xlab = "lnM", group = "Study")
 ```
 ```{r}
+#| label: lnm-to-deq-approx-sens
 lnm_to_deq_approx(ma_safe_sens, "Sensitivity model (ma_safe_sens)")
 ```
 
 
 
 ## lnM meta-regression
+
+::: panel-tabset
+
+## Orginal meta-regression
+
+```{r}
+#| label: mod-lnM-safe-sens1
+mod_safe2 <- rma.mv(
+  yi   = yi_lnM_safe, 
+  V    = vi_lnM_safe,
+  mods = ~ magnitude + duration + Recovery + nSE,
+  random =  list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test = "t")
+
+summary(mod_safe2)
+r2_ml(mod_safe2)
+
+bubble_plot(mod_safe2, mod = "Recovery", 
+            ylab = "lnM", 
+            xlab = "Recovery period", 
+            group = "Study",
+            legend.pos = "bottom.left") +
+  scale_colour_manual(values = rep("grey20",8)) +
+  scale_fill_manual(values = "#117733") 
+```
+
+
+## Sensitivity meta-regression
 
 ```{r}
 #| label: mod-lnM-safe-sens
@@ -639,6 +676,7 @@ bubble_plot(mod_safe2, mod = "Recovery",
   scale_fill_manual(values = "#117733") 
 ```
 :::
+:::
 
 ### Figure 3
 
@@ -653,24 +691,38 @@ bubble_plot(mod_safe2, mod = "Recovery",
 
 ## Example 2 — Kunc & Schmidt anthropogenic noise dataset
 
-### Data + effect size
+For this dataset, the underlying research question was whether exposure to anthropogenic noise alters animal behaviour and physiology relative to control (quiet) conditions. Each effect size contrasts a noise treatment with a control group, allowing the magnitude of noise-induced responses to be synthesised across taxa and response variables.
+
+### Effect size calculations 
 
 ```{r}
+#| label: load-data example 2
+# Workflow mirrors Example 1:
+#   1) Load + basic cleaning
+#   2) Compute SMD (here using unequal-variance SMDH)
+#   3) Compute folded-normal magnitude of SMD
+#   4) Compute lnM via Delta plug-in and via SAFE
+
+# Load data
 data<-read.csv(here("data", "kunc_2019.csv"), na.strings=c("","NA"))
 data<-as.data.frame(data)
-data.2 <-data[which(data$species.latin!="NA"),]                ### exclude cases where no species were provided
+
+
+# 2) Basic cleaning: exclude rows with missing species information
+data.2 <-data[which(data$species.latin!="NA"),]                
 str(data.2)
 
-#  make sd.control and sd.noise numeric
+# 3) Ensure SD fields are numeric
 
 data.2$sd.control<-as.numeric(as.character(data.2$sd.control))
 data.2$sd.noise<-as.numeric(as.character(data.2$sd.noise))
 
-# exclude NA in dat$sd.control
+# Exclude rows where sd.control is missing (cannot compute SMD/lnM)
 
 data.2 <- data.2[which(!is.na(data.2$sd.control)),]
 
-# hetro-verion of SMD
+# 4) Standardized mean difference with unequal variances (SMDH)
+# (Heteroscedastic SMD variant implemented in metafor)
 dat <- escalc(measure="SMDH", 
               m1i=mean.control, sd1i=sd.control, n1i=sample.size.control, 
               m2i=mean.noise, sd2i=sd.noise,  n2i=sample.size.noise.1,
@@ -678,27 +730,26 @@ dat <- escalc(measure="SMDH",
               append = TRUE,
               var.names = c("yi_d",   "vi_d"))
 
-# fitering out NA for yi_d and vi_d
+# Remove rows where effect size could not be computed
 dat <- dat[which(!is.na(dat$yi_d)),]
 
-dat <- dat %>%                                   # <- your existing data frame
+# 5) Folded-normal magnitude of SMD
+dat <- dat %>%                                   
   mutate(
     abs_d   = map2_dfr(yi_d,   vi_d,   ~ {
       out <- folded_norm(.x, .y)
       tibble(yi_d_abs   = out["point"], vi_d_abs   = out["var"])
-    })
-  ) %>%                                           # flatten the tibbles
-  unnest(c(abs_d))
+    })) %>%
+  unnest(abs_d)
 
-# lnM
+# 6) lnM via Delta plug-in
 dat <- dat %>% mutate(
   lnM_raw = pmap_dfr(
     list(mean.control, mean.noise, sd.control, sd.noise, sample.size.control, sample.size.noise.1),
     get_lnM_raw)
 ) %>% unnest(lnM_raw)
 
-# SAFE is stochastic so set a seed
-set.seed(123)
+# 7) lnM via SAFE (single-fit parametric bootstrap)
 
 dat <- dat %>% mutate(
   lnM_safe = pmap_dfr(
@@ -710,10 +761,11 @@ dat <- dat %>% mutate(
 ### How many lnM can be obtained?
 
 ```{r}
-#| label: rescued-summary
+#| label: rescued-summary_ex2
 #| message: false
 #| warning: false
-
+#| code-fold: true
+#| 
 stopifnot(exists("dat"), is.data.frame(dat))
 
 n_total <- nrow(dat)
@@ -721,12 +773,12 @@ n_total <- nrow(dat)
 summary_tbl <- tibble::tibble(
   Metric = c(
     "Total effect sizes",
-    "Delta lnM: point estimate missing",
-    "Delta lnM: sampling variance missing",
-    "SAFE lnM: point estimate missing",
-    "SAFE lnM: sampling variance missing",
-    "Rescued by SAFE (point available when Delta missing)",
-    "Rescued by SAFE (variance available when Delta missing)"
+    "Delta plug-in lnM: point estimate unavailable (undefined)",
+    "Delta plug-in lnM: sampling variance unavailable",
+    "SAFE lnM: point estimate unavailable",
+    "SAFE lnM: sampling variance unavailable",
+    "SAFE rescue: point estimate available when Delta plug-in lnM is undefined",
+    "SAFE rescue: sampling variance available when Delta plug-in lnM is undefined"
   ),
   Count = c(
     n_total,
@@ -746,7 +798,7 @@ summary_tbl <- tibble::tibble(
     )
   )
 
-# Headline numbers people care about
+# Headline numbers (reported in text)
 n_saved <- sum(!is.na(dat$yi_lnM_safe))
 p_saved <- 100 * n_saved / n_total
 
@@ -758,7 +810,7 @@ cat(sprintf(
 summary_tbl %>%
   kableExtra::kable(
     digits = 1,
-    caption = "Data availability for lnM estimates: Delta plug-in vs SAFE (counts and % of all effect sizes).",
+    caption = "Data availability for lnM estimates in the Kunc & Schmidt dataset: Delta plug-in versus SAFE (counts and % of all effect sizes).",
     align = c("l", "r", "r")
   ) %>%
   kableExtra::kable_styling(full_width = FALSE)
@@ -767,17 +819,19 @@ summary_tbl %>%
 ### Meta-analysis model
 
 ```{r}
-# restrict data just for birds, mammals, amphibians and fish
+#| label: ex2-filter-taxa
+# Restrict to the focal taxa used in the worked example
+# (exclude groups with very sparse representation in this dataset)
 dat<-dat[which(dat$taxon.for.plot!="reptilia" & 
                  dat$taxon.for.plot!="mollusca" & 
                  dat$taxon.for.plot!="arthropoda"),]
 ```
 
 ::: panel-tabset
-### Absulte SMD
+## Absolute SMD (folded-normal magnitude)
 
 ```{r}
-# meta-analysis using abs(d)
+#|label: ma-abs-smd-ex2
 ma_abs <- rma.mv(
   yi   = yi_d_abs, 
   V    = vi_d_abs,
@@ -792,7 +846,8 @@ summary(ma_abs)
 i2_ml(ma_abs)
 
 
-# adding overall to orchard plot
+# Add an "Overall" row to the orchard object for visualization
+
 main <- mod_results(ma_abs, group = "study")
 main <- unclass(main)
 main$mod_table$name <- "Overall" 
@@ -809,10 +864,10 @@ p7 <- orchard_plot(main,  xlab = "abs(SMD)",
 p7
 ```
 
-### lnM
+## lnM
 
 ```{r}
-# meta-analysis using safe
+#label: ma-lnM-safe-ex2
 ma_safe <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
@@ -826,7 +881,7 @@ ma_safe <- rma.mv(
 summary(ma_safe)
 i2_ml(ma_safe)
 
-# adding overll to orchard plot
+# Add an "Overall" row to the orchard object for visualization
 main2 <- mod_results(ma_safe, group = "study")
 main2 <- unclass(main2)
 main2$mod_table$name <- "Overall" 
@@ -844,15 +899,23 @@ p8 <- orchard_plot(main2,  xlab = "lnM",
 
 p8
 ```
+```{r}
+#| label: lnm-to-deq-approx-ex2
+lnm_to_deq_approx(ma_safe, "Overall model (ma_safe)")
+```
+
 :::
 
 ### Meta-regression
 
 ::: panel-tabset
-### Absulte SMD
+
+## Absolute SMD (folded-normal magnitude)
 
 ```{r}
-# meta-regression abs(d) using taxon.for.plot
+#| label: mod-abs-smd-ex2
+# Meta-regression using folded-normal |SMD| with taxonomic group as a categorical moderator.
+# The "- 1" removes the intercept so each taxon level is estimated as its own mean.
 mod_abs <- rma.mv(
   yi   = yi_d_abs, 
   V    = vi_d_abs,
@@ -875,17 +938,17 @@ p9 <- orchard_plot(mod_abs,
   scale_colour_manual(values = rep("grey20",8)) +
   scale_fill_manual(values = rep("#CC6677", 4))
 
-# multiple comparison
+# multiple comparisons (Tukey-style contrasts among taxon means)
 summary(glht(mod_abs, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
 p9
 
 ```
 
-### lnM
+## lnM
 
 ```{r}
-# meta-regression safe using taxon.for.plot
+#| label: mod-lnM-safe-ex2
 mod_safe <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
@@ -907,7 +970,7 @@ p10 <- orchard_plot(mod_safe,
                     branch.size = 5) +
   scale_colour_manual(values = rep("grey20",8)) +
   scale_fill_manual(values = rep("#117733", 4)) 
-# multiple comparison
+# multiple comparisons
 summary(glht(mod_safe, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
 
 p10
@@ -917,7 +980,9 @@ p10
 ### Egger regression (publication bias test)
 
 ```{r}
-# Creaing a variable using n0
+#| label: ex2-egger-setup
+# Create sample-size-based predictors using the harmonic mean sample size n0
+
 dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1
                  ) / (dat$sample.size.control + dat$sample.size.noise.1)
 dat$nSE <- 1 / sqrt(dat$n0)
@@ -925,10 +990,10 @@ dat$nV <- 1 / dat$n0
 ```
 
 ::: panel-tabset
-### Absulte SMD
+## Absolute SMD (folded-normal magnitude)
 
 ```{r}
-# using abs(d)
+#| label: ex2-egger-abs-smd
 egger_abs <- rma.mv(
   yi   = yi_d_abs, 
   V    = vi_d_abs,
@@ -952,10 +1017,10 @@ p11 <- bubble_plot(egger_abs, mod = "nSE",
 p11
 ```
 
-### lnM (sqrt(1/n0))
+## lnM (sqrt(1/n0))
 
 ```{r}
-# using safe
+#| label: ex2-egger-lnM-safe
 egger_safe <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
@@ -980,10 +1045,10 @@ p12 <- bubble_plot(egger_safe, mod = "nSE",
 p12
 ```
 
-### lnM (1/n0)
+## lnM (1/n0)
 
 ```{r}
-# equivalent to fitting V rather than SE
+#| label: ex2-egger-lnM-safe-2
 egger_safe2 <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
@@ -997,19 +1062,28 @@ egger_safe2 <- rma.mv(
   test = "t")
 summary(egger_safe2)
 # bubble plot
-bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "sqrt(inverse sample size)", group = "study")
+bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "Inverse sample size)", group = "study")
 ```
+
+```{r}
+#| label: lnm-to-deq-approx-egger-ex2
+lnm_to_deq_approx(egger_safe2, "Egger-style model (egger_safe2)")
+```
+
 :::
 
 ### Sensitivity analysis
 
 ```{r}
-# sensitivity analysis - we want to get effect sizes where n1 + n2 = or > 40
+#| label: ex2-sensitivity-subset
+
+# Sensitivity subset: retain effect sizes with total sample size >= 40
 dat_sens <- dat %>% filter((sample.size.control + sample.size.noise.1) >= 40)
 ```
 
 ::: panel-tabset
-### lnM: meta-analysis
+
+## lnM: meta-analysis
 
 ```{r}
 ma_safe_sens <- rma.mv(
@@ -1024,18 +1098,24 @@ ma_safe_sens <- rma.mv(
   test = "t")
 
 summary(ma_safe_sens)
-summary(ma_safe)
+
 
 i2_ml(ma_safe_sens)
 
 orchard_plot(ma_safe_sens,  xlab = "lnM", group = "study")
 ```
+```{r}
+#| label: lnm-to-deq-approx-sens-ex2
+lnm_to_deq_approx(ma_safe_sens, "Sensitivity model (ma_safe_sens)")
+```
 
-### lnM meta-regression
+## lnM meta-regression
+::: panel-tabset
+
+## Original lnM Egger's regression
 
 ```{r}
-# doing meta-regression again
-# meta-regression safe using taxon.for.plot
+#| label: mod-lnM-safe-original-ex2
 mod_safe2 <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
@@ -1070,10 +1150,10 @@ orchard_plot(results,
   scale_fill_manual(values = rep("#117733", 4)) 
 ```
 
-### lnM Egger regression
+## Sensitivity lnM Egger regression
 
 ```{r}
-# sensivity + nSE - even smaller
+#| label: mod-lnM-safe-sens-ex2
 
 mod_safe3 <- rma.mv(
   yi   = yi_lnM_safe,
@@ -1097,7 +1177,7 @@ results2 <- mod_results(mod_safe3,
                        at = list(nSE = c(0)))
 
 # orchard plot
-# probably closer to the truth
+
 orchard_plot(results2, 
              mod = "taxon.for.plot", 
              xlab = "lnM", 
@@ -1109,11 +1189,16 @@ orchard_plot(results2,
 
 ```
 :::
+:::
 
 ### Figure 4
 
 ```{r}
-# making 2 x 3 panel fig
+#| label: ex2-figure-4
+# Combine panels into a 2 × 3 layout:
+# Row 1: overall meta-analyses (absolute SMD vs lnM)
+# Row 2: taxon meta-regressions (absolute SMD vs lnM)
+# Row 3: Egger-style diagnostics (absolute SMD vs lnM)
 (p7 + p8) / (p9 + p10) / (p11 + p12) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
 ```
 
