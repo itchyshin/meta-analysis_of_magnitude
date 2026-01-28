@@ -77,6 +77,21 @@ suppressPackageStartupMessages({
 # Reproducibility: SAFE uses Monte Carlo draws (bootstrap), so we fix a seed once.
 set.seed(123)
 
+# ---- lnM SAFE via orchaRd (internal functions) ----------------------------
+
+get_lnM_safe_orchard <- function(m1, m2, s1, s2, n1, n2) {
+  out <- orchaRd:::.safe_lnM_indep(m1, m2, s1, s2, n1, n2)
+
+  tibble::tibble(
+    yi_lnM_safe_orchard = out$lnM_SAFE,
+    vi_lnM_safe_orchard = out$var_lnM_SAFE,
+    draws_kept_orchard  = out$kept,
+    draws_total_orchard = out$total,
+    attempts_orchard    = out$attempts,
+    status_orchard      = out$status
+  )
+}
+
 # loading SAFE function
 source(here("R", "SAFE_fun.R")) 
 
@@ -207,15 +222,39 @@ dat <- dat %>% mutate(
 
 ## lnM via SAFE (single-fit parametric bootstrap)
 
+::: pannel-tabset
+
 ```{r}
 #| label: SAFE-lnM
 # SAFE is stochastic, but the seed was set in the setup chunk for reproducibility
-dat <- dat %>% mutate(
-  lnM_safe = pmap_dfr(
-    list(m1i, m2i, sd1i, sd2i, n1i, n2i),
-    get_lnM_safe)
-) %>% unnest(lnM_safe)
+dat <- dat %>%
+  dplyr::mutate(
+    lnM_safe = purrr::pmap_dfr(
+      list(m1i, m2i, sd1i, sd2i, n1i, n2i),
+      get_lnM_safe
+    )
+  ) %>%
+  tidyr::unnest(lnM_safe)
+
 ```
+
+## lnM via SAFE (orchaRd)
+
+```{r}
+#| label: safe-lnm-orchard
+lnM_safe_orchard_df <- purrr::pmap_dfr(
+  list(dat$m1i, dat$m2i, dat$sd1i, dat$sd2i, dat$n1i, dat$n2i),
+  get_lnM_safe_orchard
+)
+
+dat <- dplyr::bind_cols(dat, lnM_safe_orchard_df)
+
+
+```
+
+
+:::
+
 :::
 
 ### How many lnM estimatescan be obtained?
@@ -381,6 +420,51 @@ p2 <- orchard_plot(main2,  xlab = "lnM",
 
 p2
 ```
+
+```{r}
+#| label: ma-lnM-safe-orchard
+#| message: false
+#| warning: false
+
+# Meta-analysis using lnM estimated via SAFE (orchaRd implementation)
+ma_safe_orchard <- rma.mv(
+  yi     = yi_lnM_safe_orchard,
+  V      = vi_lnM_safe_orchard,
+  random = list(
+    ~ 1 | Study,
+    ~ 1 | ES.ID
+  ),
+  data   = dat_cond,
+  method = "REML",
+  test   = "t"
+)
+
+summary(ma_safe_orchard)
+i2_ml(ma_safe_orchard)
+ml_m1(ma_safe_orchard)
+
+# Add an "Overall" row to the orchard object for visualization
+main2 <- mod_results(ma_safe_orchard, group = "Study")
+main2 <- unclass(main2)
+main2$mod_table$name <- "Overall"
+main2$data$moderator <- "Overall"
+class(main2) <- "orchard"
+
+p2 <- orchard_plot(
+  main2,
+  xlab = "lnM (SAFE; orchaRd)",
+  group = "Study",
+  trunk.size = 0.6,
+  branch.size = 5
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
+
+p2
+
+```
+
+
 :::
 
 ::: callout-note
