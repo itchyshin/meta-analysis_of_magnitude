@@ -1,6 +1,8 @@
 ---
 title: "Supplementary Tutorial: A new effect size for meta-analysis of magnitude: lnM"
 subtitle: "Worked examples + extra results from the simulation (figures + tables)"
+date: last-modified
+date-format: long
 author:
   - name: Shinichi Nakagawa
     attributes:
@@ -48,6 +50,101 @@ execute:
   message: false
   cache: false
 ---
+```{=html}
+<style>
+  /* --- GLOBAL FONTS & COLORS --- */
+  :root {
+    --theme-orange: #E95420;
+    --theme-grey: #f0f0f0;
+  }
+  
+  body {
+    background-color: #fafafa; /* Very soft grey background to reduce eye strain */
+    color: #2c3e50;
+  }
+
+  /* --- HERO TITLE BLOCK --- */
+  header#title-block-header {
+    background: white;
+    padding: 3rem 2rem;
+    margin-bottom: 3rem;
+    border-bottom: 4px solid var(--theme-orange);
+    text-align: center;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+  }
+  
+  h1.title {
+    color: var(--theme-orange);
+    font-weight: 900;
+    letter-spacing: -1px;
+    font-size: 2.5rem;
+  }
+  
+  p.subtitle {
+    font-size: 1.3rem;
+    color: #7f8c8d;
+    font-weight: 300;
+  }
+
+  /* --- AUTHORS SECTION --- */
+  .quarto-title-meta {
+    justify-content: center !important; /* Center the authors */
+    text-align: center;
+  }
+
+  /* --- HEADINGS --- */
+  h2 {
+    border-bottom: 2px solid var(--theme-grey);
+    padding-bottom: 10px;
+    margin-top: 3rem;
+    color: #333;
+    font-weight: 700;
+  }
+  
+  h2::after {
+    /* Little orange tab under headers */
+    content: '';
+    display: block;
+    width: 50px;
+    height: 4px;
+    background: var(--theme-orange);
+    margin-top: 10px;
+  }
+
+  /* --- TABLE OF CONTENTS (TOC) --- */
+  #quarto-toc-target {
+    border-left: 1px solid #e0e0e0;
+  }
+  
+  #TOC > ul > li.active > a {
+    color: var(--theme-orange) !important;
+    font-weight: bold;
+    border-left: 3px solid var(--theme-orange);
+    padding-left: 10px;
+  }
+
+  /* --- CODE BLOCKS --- */
+  div.sourceCode {
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    border: 1px solid #e1e1e1;
+  }
+
+  /* --- LINKS --- */
+  a {
+    color: var(--theme-orange);
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  a:hover {
+    color: #bf360c;
+    text-decoration: underline;
+  }
+</style>
+
+
+
+```
 
 ```{r}
 #| label: setup
@@ -68,28 +165,33 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(metafor)        # escalc(), rma.mv()
   library(here)           # robust file paths
-  library(orchaRd)        # orchard_plot(), bubble_plot()
+  library(orchaRd)        # orchard_plot(), bubble_plot(), .safe_lnM_indep()
   library(kableExtra)     # HTML tables
   library(patchwork)      # combining ggplots   
   library(multcomp)        # multiple comparisons
 })
 
-# Reproducibility: SAFE uses Monte Carlo draws (bootstrap), so we fix a seed once.
-set.seed(123)
+
 
 # ---- lnM SAFE via orchaRd (internal functions) ----------------------------
 
-get_lnM_safe_orchard <- function(m1, m2, s1, s2, n1, n2) {
-  out <- orchaRd:::.safe_lnM_indep(m1, m2, s1, s2, n1, n2)
+get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, 
+                         min_kept = 100000, chunk_init = 5000, ## Matching simulation parameters
+                         seed=123) {  # Setting seed for reproducibility, default seed  in orchaRd was 565
+  out <- orchaRd:::.safe_lnM_indep(x1bar = m1, x2bar = m2,
+  sd1 = s1, sd2 = s2,
+  n1 = n1, n2 = n2,
+  min_kept = min_kept,
+  chunk_init = chunk_init,seed=seed)
 
-  tibble::tibble(
-    yi_lnM_safe_orchard = out$lnM_SAFE,
-    vi_lnM_safe_orchard = out$var_lnM_SAFE,
-    draws_kept_orchard  = out$kept,
-    draws_total_orchard = out$total,
-    attempts_orchard    = out$attempts,
-    status_orchard      = out$status
-  )
+tibble::tibble(
+  yi_lnM_safe = out$lnM_SAFE,
+  vi_lnM_safe = out$var_lnM_SAFE,
+  draws_kept  = out$kept,
+  draws_total = out$total,
+  attempts    = out$attempts,
+  status      = out$status
+)
 }
 
 # loading SAFE function
@@ -117,21 +219,22 @@ get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
   )
 }
 
-get_lnM_safe <- function(m1, m2, s1, s2, n1, n2) {
-  out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2)     # returns list(point,var,kept,total)
+
+
+
+
+
+```
+<!--get_lnM_safe <- function(m1, m2, s1, s2, n1, n2,min_kept = 100000, chunk_init = 5000) {
+  out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2,min_kept = min_kept,
+    chunk_init = chunk_init)     # returns list(point,var,kept,total)
   tibble(
     yi_lnM_safe = out$point,
     vi_lnM_safe = out$var,
     draws_kept  = out$kept,
     draws_total = out$total
   )
-}
-
-
-
-
-```
-
+}-->
 # Overview
 
 This supplement has two parts:
@@ -222,7 +325,7 @@ dat <- dat %>% mutate(
 
 ## lnM via SAFE (single-fit parametric bootstrap)
 
-::: pannel-tabset
+
 
 ```{r}
 #| label: SAFE-lnM
@@ -238,22 +341,6 @@ dat <- dat %>%
 
 ```
 
-## lnM via SAFE (orchaRd)
-
-```{r}
-#| label: safe-lnm-orchard
-lnM_safe_orchard_df <- purrr::pmap_dfr(
-  list(dat$m1i, dat$m2i, dat$sd1i, dat$sd2i, dat$n1i, dat$n2i),
-  get_lnM_safe_orchard
-)
-
-dat <- dplyr::bind_cols(dat, lnM_safe_orchard_df)
-
-
-```
-
-
-:::
 
 :::
 
@@ -421,48 +508,7 @@ p2 <- orchard_plot(main2,  xlab = "lnM",
 p2
 ```
 
-```{r}
-#| label: ma-lnM-safe-orchard
-#| message: false
-#| warning: false
 
-# Meta-analysis using lnM estimated via SAFE (orchaRd implementation)
-ma_safe_orchard <- rma.mv(
-  yi     = yi_lnM_safe_orchard,
-  V      = vi_lnM_safe_orchard,
-  random = list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
-  data   = dat_cond,
-  method = "REML",
-  test   = "t"
-)
-
-summary(ma_safe_orchard)
-i2_ml(ma_safe_orchard)
-ml_m1(ma_safe_orchard)
-
-# Add an "Overall" row to the orchard object for visualization
-main2 <- mod_results(ma_safe_orchard, group = "Study")
-main2 <- unclass(main2)
-main2$mod_table$name <- "Overall"
-main2$data$moderator <- "Overall"
-class(main2) <- "orchard"
-
-p2 <- orchard_plot(
-  main2,
-  xlab = "lnM (SAFE; orchaRd)",
-  group = "Study",
-  trunk.size = 0.6,
-  branch.size = 5
-) +
-  scale_colour_manual(values = rep("grey20", 8)) +
-  scale_fill_manual(values = "#117733")
-
-p2
-
-```
 
 
 :::
