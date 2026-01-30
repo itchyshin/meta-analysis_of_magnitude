@@ -244,17 +244,18 @@ Part I — Worked examples (Examples 1–2).
 We demonstrate a complete, end-to-end workflow for quantifying effect magnitude using lnM. For each dataset, we first compute a conventional standardized mean difference (SMD) and compare results obtained using absolute SMD–based measures with those obtained using lnM.
 
 We then estimate lnM using two approaches:
-
+<!-- EJL: The paragraph above already said that you calculated lnM, which makes the 'then' confusing. How about: "We note that we estimate lnM with two approaches:" -->
 (i) a **Delta plug-in estimator** and
 (ii) the **SAFE bootstrap bias-corrected point estimate (SAFE-BC)** which is designed to remain usable when the plug-in estimator is undefined (e.g., when $MS_B \le MS_W$).
 
-Using these estimates, we fit multilevel meta-analytic models and meta-regressions and visualise results using the same plot types reported in the main manuscript.
+Using these estimates, we then fit multilevel meta-analytic models and meta-regressions and visualise results using the same plot types reported in the main manuscript.
 
 <!-- End-to-end demonstration of the lnM workflow in real datasets: compute standardized mean differences, convert to folded-normal magnitudes, then compute lnM using (i) Delta plug-in and (ii) SAFE bootstrap bias-corrected point estimate (SAFE-BC). We then fit multilevel meta-analytic models and produce the same types of figures used in the manuscript. -->
 
 Part II — Simulation reproduction (Figures + Tables).
 
 We reproduce all simulation-based figures and tables reported in the manuscript using pre-computed simulation summaries and, where required, replicate-level outputs. These results characterise estimator performance in terms of bias, variance behaviour, empirical coverage, root mean square error (RMSE), and Monte Carlo standard error (MCSE).
+<!-- EJL: Not sure what 'replicate-level' outputs means -->
 
 We additionally provide compact tables summarising estimator feasibility, numerical stability, and SAFE bootstrap acceptance rates across simulation designs
 
@@ -268,6 +269,7 @@ Part I illustrates how lnM is computed, analysed, and interpreted in real meta-a
 ## Example 1 — Almeida et al nutrition dataset
 
 Almeida *et al.* examined whether experimental manipulations of nutrition produce consistently large deviations from control conditions across a range of physiological and performance traits. Because the biological interest lies in the magnitude of responses rather than their direction, this dataset provides a natural setting for comparing analyses based on absolute SMD measures with corresponding analyses based on lnM.
+<!-- EJL: bibtex citation? -->
 
 ### Effect size calculations
 
@@ -279,11 +281,14 @@ Almeida *et al.* examined whether experimental manipulations of nutrition produc
 dat <- read_csv(here("data", "data_almeida.csv"), show_col_types = FALSE)
 ```
 
+<!-- EJL: In the table below, is it possible to have the tabs in a single row? Right now it's on 2 rows in html. Also, the style doesn't show tab boundaries except for on the tab opened, which makes it look a bit confusing—isn't clear that they are tabs until you click on them. -->
+
 ::: panel-tabset
 ## Conventional SMD (signed effect size)
+<!-- EJL: Having a small chunk of text at the top of each of these could be helpful. E.g., 'until now, people calculated magnitude of differences by calculating SMD effect sizes and then taking their absolute value. We'll do that here with the 'escalc' function of the R package metafor. -->
 
 ```{r}
-#|label: escalc-smd
+#| label: escalc-smd
 dat <-  escalc(measure = "SMD", 
                m1i = m1i, 
                m2i = m2i, 
@@ -296,9 +301,14 @@ dat <-  escalc(measure = "SMD",
 ```
 
 ## Folded-normal magnitude of SMD 
+<!-- EJL: Here we'll take the absolute value of our SMD effect sizes -->
+<!-- EJL: Though to be honest, shouldn't this just be in the code chunk above? -->
+<!-- EJL: Also, this code is very confusing. Why is it such a complicated operation? It's not just taking the absolute value huh? -->
+<!-- EJL: Maybe we can explain the 'folded_norm' function? -->
 
 ```{r}
 #| label: folded-normal-smd
+
 dat <- dat %>%                               
   mutate(
     abs_d   = map2_dfr(yi_d,   vi_d, ~ {
@@ -313,6 +323,8 @@ dat <- dat %>%
 
 ## lnM via Delta plug-in estimator
 
+<!-- EJL: "Here we calculate lnM numerically based on the definition formula. However, this can produce NAs when the means of the two groups are very similar.  -->
+
 ```{r}
 #| label: delta-lnM
 
@@ -324,8 +336,11 @@ dat <- dat %>% mutate(
 ```
 
 ## lnM via SAFE (single-fit parametric bootstrap)
+<!-- EJL: Maybe should set the seed here? Or show at least a portion of the setup chunk? it's hidden in html -->
+<!-- EJL: Here we calculate lnM using SAFE bootstrapping to avoid NAs. This uses a custom function defined above. Blah blah blah -->
 
-
+<!-- EJL: I'm getting an error in pmap when I run this. "In index: 1. Caused by error in .f(): object .safe_lnM_indep not found -->
+<!-- EJL: Also...I just hate purrr syntax. Do you think average readers will be intimidated not by the effect size itself but by the code? -->
 
 ```{r}
 #| label: SAFE-lnM
@@ -339,12 +354,19 @@ dat <- dat %>%
   ) %>%
   tidyr::unnest(lnM_safe)
 
-```
+#' [EJL: I'd write it like this just so syntax is simpler and more easily read with knowledge of just base R]
+#' [But I'm still getting an error: object .safe_lnM_indep not found. I tried reinstalling orchard but still doesn't work]
+out <- get_lnM_safe(m1 = dat$m1i, m2 = dat$m2i,
+             s1 = dat$sd1i, s2 = datsd2i,
+             n1 = dat$n1i, n2 = dat$n2i)
+dat <- cbind(dat,
+             out)
 
+```
 
 :::
 
-### How many lnM estimatescan be obtained?
+### How many lnM estimates can be obtained?
 
 The Delta plug-in estimator of lnM can be undefined for some effect sizes, particularly near boundary conditions. SAFE is designed to be more robust in these cases by relying on a single-fit parametric bootstrap. The table below summarises (i) how often each method yields a usable lnM point estimate and sampling variance, and (ii) how often SAFE provides valid estimates in cases where the Delta plug-in estimator fails.
 
@@ -352,7 +374,7 @@ The Delta plug-in estimator of lnM can be undefined for some effect sizes, parti
 Percentages are computed relative to the total number of effect sizes in the dataset.
 :::
 
-Because lnM can be undefined when the between-group variance is not estimable, we first quantify how often each estimator returns usable lnM point estimates and sampling variances.
+Because lnM can be undefined when the between-group variance is not estimatable, we first quantify how often each estimator returns usable lnM point estimates and sampling variances.
 
 ```{r}
 #| label: lnM-availability-summary
@@ -413,11 +435,18 @@ summary_tbl %>%
   kableExtra::scroll_box(width = "100%", height = "400px")
 ```
 
+<!-- EJL: Perhaps should describe these results in plain English? Took a stab -->
+This table shows that SAFE calculated lnM point estimates and sampling variance for all effect sizes while plugin-methods could not calculate these estimates for 39.5% of effect sizes.
+
 ### Meta-analysis model
 
-We fit the same multilevel random-effects structure for two magnitude metrics: (i) the folded-normal magnitude of SMD and (ii) lnM estimated with SAFE. 
+Now we'll fit the same multilevel random-effects structure for two magnitude metrics: (i) the folded-normal magnitude of SMD and (ii) lnM estimated with SAFE. 
 In both cases, effect sizes are nested within studies (random intercepts for *Study* and for the within-study effect-size ID).
 
+<!-- EJL: Just so people don't get confused by the data, perhaps you should explain the 'condition' filtering in teh description of the dataset above?
+E.g., "Almeida looked at this in terms of total body condition, reproduction, and xyz. We'll focus most of our examples on Condition. -->
+
+We'll start by only analyzing the magnitude of difference in body condition between birds.
 ```{r}
 #| label: subset-condition-example-1
 
@@ -428,13 +457,14 @@ dim(dat_cond)
 ```
 
 ::: panel-tabset
-## Absulte SMD (folded-normal magnitude)
+## Absolute SMD (folded-normal magnitude)
 
 This model summarises the typical magnitude of effects using the folded-normal transformation of the standardized mean difference (SMD). Rather than taking the absolute value of SMD directly, this approach uses the implied folded-normal distribution to obtain an approximately unbiased estimate of effect magnitude.
+<!-- EJL: Ah ok, so now you explain folded-normal. I'd move this up above to where you calculate it. And I'd also explain the function that you use to calculate it -->
+<!-- EJL: Shame that the data trans steps from mod_results are complex. You might lose some people there. -->
 
 ```{r}
 # label: ma-abs-smd
-
 
 ma_abs <- rma.mv(
   yi   = yi_d_abs, 
@@ -450,12 +480,11 @@ summary(ma_abs)
 i2_ml(ma_abs)
 
 # We added an "Overall" row to orchard plot for visualization
-main <- mod_results(ma_abs, group = "Study")
+main <- orchaRd::mod_results(ma_abs, group = "Study")
 main <- unclass(main)
 main$mod_table$name <- "Overall" 
 main$data$moderator <- "Overall"
 class(main) <- "orchard"
-
 
 p1 <- orchard_plot(main,  xlab = "abs(SMD)", 
                    group = "Study",
@@ -470,6 +499,7 @@ p1
 ## lnM (SAFE)
 
 This model summarises the typical magnitude of effects using lnM estimated via SAFE. SAFE is used because lnM can be undefined under the Delta plug-in approach for some effect sizes, particularly when between-group variability is not larger than within-group variability.
+<!-- this background should go up above I think -->
 
 ```{r}
 #| label: ma-lnM-safe
@@ -548,11 +578,15 @@ lnm_to_deq_approx(ma_safe, label = "Overall model (ma_safe)")
 ```
 
 Because the transformation is monotone, confidence intervals for  $d_{\mathrm{eq}}$ can be obtained by transforming the corresponding lnM interval endpoints
+<!-- Maybe explain that in plainer english? -->
 :::
 
 ### Meta-regression
+<!-- It's unfortunate that a predictor is called 'magnitude' to predict 'magnitude'. Could you rename variable somehow? -->
 
 We next examine whether variation in effect magnitude is associated with study-level covariates. Specifically, we regress the magnitude metric on *magnitude*, *duration*, and *Recovery* while retaining the same multilevel structure (random intercepts for *Study* and within-study effect-size ID). This allows a direct comparison of moderator patterns under a conventional absolute-value magnitude metric versus lnM.
+
+<!-- I'm not sure if it's good to have these as two separate tabs in a tabset because you have to click lnM to see how much better it is -->
 
 :::: panel-tabset
 ## Absolute SMD (folded-normal magnitude)
@@ -611,16 +645,25 @@ p4 <- bubble_plot(mod_safe, mod = "Recovery",
 p4
 ```
 
+<!-- Perhaps should brag in text about how much lnM is? -->
+*EJL*: As you can see, the folded-SMD estimate of magnitude is bounded by 0 and pretty much flat-lines like a boring turd. However, our beautiful new effect size (lnM) is normally distributed and shows a strong and interesting relationship between recovery period and magnitude of differences between control and treatment.
 
 ::::
 
 ### Egger regression (small-study effects diagnostic)
 
-We use an Egger-style meta-regression to assess whether estimated effect magnitudes systematically vary with study size (a pattern that can be consistent with small-study effects and publication bias). For lnM, using the usual standard-error-based predictor is problematic because lnM and its estimated standard error can be mechanically related. We therefore use a *sample-size-based* predictor derived from the harmonic mean sample size,
+We use an Egger-style meta-regression to assess whether estimated effect magnitudes systematically vary with study size (a pattern that can be consistent with small-study effects and publication bias). For lnM, using the usual standard-error-based predictor is problematic because lnM and its estimated standard error can be mechanically related. We therefore use a *sample-size-based* predictor derived from the harmonic mean sample size (often called 'effective sample size),
+<!-- Cite Nakagawa et al. 2022? Or whatever that paper is? -->
 
 $n_0=\frac{n_1 n_2}{n_1+n_2}$,
 
 and fit models using  $1/\sqrt{n_0}$ (an SE-analogue) and $1/n_0$ (a variance-analogue). These predictors depend only on sample sizes and avoid structural dependence on the observed lnM.
+
+<!-- Perhaps explain briefly that 1/sqrt(eff_n) is for testing for the presence of bias while 1/eff_n is for calculating bias-corrected estimates? -->
+<!-- Again, I'd probably have this long instead of in tabs and put explanations in between each. -->
+<!-- E.g., "As you can see, the absolute value of SMD does xyz. Now let's see if we can detect publication bias with lnM, using 1/sqrt(N) -->
+<!-- "looks like there's significant evidence of bias. Let's now calculate bias-corrected estimates using 1/N: -->
+
 
 ::: {.callout-important}
 Because lnM estimates and their sampling standard errors are both functions of the same underlying variance components, they are structurally dependent. Using the sampling standard error as a predictor in Egger-type regressions would therefore violate the independence assumptions of the test.
@@ -637,7 +680,7 @@ dat_cond$nV <- 1 / dat_cond$n0
 ```
 
 :::: panel-tabset
-## Absulte SMD
+## Absolute SMD
 
 ```{r}
 # using abs(d)
@@ -836,18 +879,28 @@ bubble_plot(mod_safe2, mod = "Recovery",
 
 ### Figure 3
 
+*EJL*: Let's compare all of our models now and see how lnM explains patterns in magnitude of differences compared to SMD.
+<!-- SHouldn't the effect size be folded-SMD or whatever instead of abs(SMD)? -->
+<!-- Perhaps titles on the left and right would help? I added to patch work but I can't run code so I don't know how it looks :) -->
+
 ```{r}
 #| label: ex1-figure-3
 # Combine panels into a 2 × 3 layout:
 # Row 1: overall meta-analyses (absolute SMD vs lnM)
 # Row 2: meta-regressions (absolute SMD vs lnM)
 # Row 3: Egger-style diagnostics (absolute SMD vs lnM)
-(p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+(p1 + ggtitle("SMD estimates") + p2 + ggtitle("lnM estimates")) / 
+  (p3 + p4) / 
+  (p5 + p6) + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 16, face = "bold"))
 ```
 
 ## Example 2 — Kunc & Schmidt anthropogenic noise dataset
-
+<!-- Since this is about pretty much the same as the previous exmaple, I skipped ahead to part II -->
 For this dataset, the underlying research question was whether exposure to anthropogenic noise alters animal behaviour and physiology relative to control (quiet) conditions. Each effect size contrasts a noise treatment with a control group, allowing the magnitude of noise-induced responses to be synthesised across taxa and response variables.
+
+<!-- Wouldn't you be interested in direction of differences in this case? -->
 
 ### Effect size calculations
 
@@ -877,8 +930,6 @@ data.2$sd.noise<-as.numeric(as.character(data.2$sd.noise))
 # Exclude rows where sd.control is missing (cannot compute SMD/lnM)
 
 data.2 <- data.2[which(!is.na(data.2$sd.control)),]
-
-
 
 
 ```
@@ -1396,6 +1447,15 @@ orchard_plot(results2,
 
 Part II reproduces all simulation-based figures and tables reported in the manuscript, using pre-computed summary outputs and, where needed, replicate-level simulation files.
 
+<!-- Perhaps we shoudl explain bias, etc? -->
+
+*EJL*: Simulations were run based on 'true' population means and variances. We then 'drew' samples of these populations based on different sample sizes and calculated estimates of magnitude of differences with SMD and lnM. These estimates were compared to the 'true' magnitudes also calculated with SMD and lnM. lnM was estimated both with SAFE and with plugin-in methods. This allowed us to understand how biased these effect size estimators (SMD or lnM) are for describing differences between groups.
+
+Bias was calculated as: XXXXXXX
+<!-- Though what I just wrote above is wrong cause it looks like you're just looking at lnM SAFE vs plugin -->
+
+<!-- Perhaps define the x axis with plain English? -->
+
 ## Figures
 
 ### Load summary results
@@ -1438,6 +1498,7 @@ base_theme <- theme_bw(11) +
 ```
 
 ### Figure 1 — Bias of point estimates
+<!-- I added scale_color_discrete to make non-abbreviated labels for colors-->
 
 ```{r}
 #| label: fig1-bias
@@ -1456,6 +1517,9 @@ bias_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+    scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Bias (estimate − true lnM)",
          colour = "estimator") +
@@ -1487,17 +1551,22 @@ rb_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+        scale_color_discrete("Estimator", 
+                         labels = c("Delta" = "Delta method derived plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Relative bias of variance (%)",
          colour = "estimator") +
     base_theme + 
-  theme(legend.position = "bottom")#+
+    theme(legend.position = "bottom")#+
     #annotate("text", x = 0.7, y = max(rb_df$relbias, na.rm = TRUE),
     #         label = "+: Var too large (conservative)\n−: Var too small (anti-conservative)",
     #         hjust = 0, vjust = 1, size = 3, colour = "grey25")
 ```
 
 ### Figure S1 — Coverage of nominal 95% intervals
+
+<!-- Perhaps define coverage? -->
 
 ```{r}
 #| label: figS1-coverage
@@ -1514,6 +1583,9 @@ cov_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+    scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Empirical coverage",
          colour = "estimator") +
@@ -1526,6 +1598,7 @@ cov_df <- dplyr::bind_rows(
 ```
 
 ### Figure S2 — RMSE of point estimates
+<!-- Ditto -->
 
 ```{r}
 #| label: figS2-rmse
@@ -1541,6 +1614,9 @@ rmse_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+     scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = expression(RMSE~"("~hat(lnM)~"\u2212"~lnM~")"),
          colour = "estimator") +
@@ -1553,6 +1629,7 @@ rmse_df <- dplyr::bind_rows(
 
 ### Reading in data for Monte Carlo (MC) standard error (SE)
 
+<!-- This code is quite complex...perhaps can describe what it does a bit. What is a 'grid' cell? -->
 ```{r}
 #| label: sim-mcse-load
 #| code-fold: true
@@ -1568,7 +1645,6 @@ if (!length(raw_files)) stop("No raw files found in: ", raw_dir)
 row_index_from_path <- function(p) as.integer(sub("^row_([0-9]{3})\\.rds$", "\\1", basename(p)))
 
 # Compute diagnostics for a single grid cell (one replicate-level data frame)
-
 
 one_raw_diag <- function(raw_df) {
   
@@ -1660,15 +1736,19 @@ mc_long <- results2 %>%
 p_mc <- ggplot(mc_long, aes(theta, value, colour = metric, group = metric)) +
   geom_line() +
   facet_wrap(~ facet_label, ncol = 4) +
+  scale_color_discrete("Estimator", 
+                         labels = c("mcse_bias_PI" = "Plugin",
+                                   "mcse_bias_SAFE" = "SAFE bootstrapping"))+
   labs(
     x = expression(theta),
     y = "MCSE of bias",
-    title = "Monte-Carlo error diagnostics: MCSE of bias (per grid cell; from raw_runs)"
+    title = "Monte-Carlo error diagnostics: MCSE of bias (per grid cell; from raw runs)"
   ) +
   base_theme + 
   theme(legend.position = "bottom")
 
 print(p_mc)
+
 ```
 
 ### Figure S4 — MCSE of mean variance estimates (from summary)
@@ -1704,13 +1784,10 @@ print(p_var_mcse)
 
 ## Tables for the supplement
 
-
-
 ### Table S1 — Method feasibility and stability
 
 Table S1 summarises feasibility and numerical stability diagnostics for lnM estimation across simulation designs and sample-size combinations. All quantities are summarised across values of the true lnM (θ) within each design × (n₁, n₂) facet.
 Medians describe typical behaviour across θ, whereas maxima highlight worst-case performance near parameter boundaries.
-
 
 **Column definitions.**  
 - **θ_min, θ_max**: Minimum and maximum true lnM values evaluated in the simulation grid for a given design × sample-size combination.  
