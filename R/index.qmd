@@ -1,6 +1,8 @@
 ---
 title: "Supplementary Tutorial: A new effect size for meta-analysis of magnitude: lnM"
 subtitle: "Worked examples + extra results from the simulation (figures + tables)"
+date: last-modified
+date-format: long
 author:
   - name: Shinichi Nakagawa
     attributes:
@@ -9,7 +11,6 @@ author:
   - name: Coralie Williams
   - name: Malgorzata Lagisz
   - name: Rose E. O'Dea
-  - name: Yefeng Yang
   - name: Daniel W. A. Noble
   - name: Alistair M. Senior
   - name: Erick Lundgren
@@ -30,7 +31,7 @@ format:
     code-tools: 
       source: false
     number-sections: false
-    # bibliography: ./bib/ref.bib
+    bibliography: ./bib/ref.bib
     fontsize: "12"
     mainfont: "Roboto"
     monofont: "Roboto"
@@ -49,13 +50,128 @@ execute:
   cache: false
 ---
 
+```{=html}
+<style>
+  /* --- GLOBAL FONTS & COLORS --- */
+  :root {
+    --theme-orange: #E95420;
+    --theme-grey: #f0f0f0;
+  }
+  
+  body {
+    background-color: #fafafa; /* Very soft grey background to reduce eye strain */
+    color: #2c3e50;
+  }
+
+  /* --- HERO TITLE BLOCK --- */
+  header#title-block-header {
+    background: white;
+    padding: 3rem 2rem;
+    margin-bottom: 3rem;
+    border-bottom: 4px solid var(--theme-orange);
+    text-align: center;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+  }
+  
+  h1.title {
+    color: var(--theme-orange);
+    font-weight: 900;
+    letter-spacing: -1px;
+    font-size: 2.5rem;
+  }
+  
+  p.subtitle {
+    font-size: 1.3rem;
+    color: #7f8c8d;
+    font-weight: 300;
+  }
+
+  /* --- AUTHORS SECTION --- */
+  .quarto-title-meta {
+    justify-content: center !important; /* Center the authors */
+    text-align: center;
+  }
+
+  /* --- HEADINGS --- */
+  h2 {
+    border-bottom: 2px solid var(--theme-grey);
+    padding-bottom: 10px;
+    margin-top: 3rem;
+    color: #333;
+    font-weight: 700;
+  }
+  
+  h2::after {
+    /* Little orange tab under headers */
+    content: '';
+    display: block;
+    width: 50px;
+    height: 4px;
+    background: var(--theme-orange);
+    margin-top: 10px;
+  }
+
+  /* --- TABLE OF CONTENTS (TOC) --- */
+  #quarto-toc-target {
+    border-left: 1px solid #e0e0e0;
+  }
+  
+  #TOC > ul > li.active > a {
+    color: var(--theme-orange) !important;
+    font-weight: bold;
+    border-left: 3px solid var(--theme-orange);
+    padding-left: 10px;
+  }
+
+  /* --- CODE BLOCKS --- */
+  div.sourceCode {
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    border: 1px solid #e1e1e1;
+  }
+
+  /* --- LINKS --- */
+  a {
+    color: var(--theme-orange);
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  a:hover {
+    color: #bf360c;
+    text-decoration: underline;
+  }
+  /* Keep Quarto tab headers on one row and make tab boundaries visible */
+.nav-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.nav-tabs .nav-link {
+  border: 1px solid #ddd;
+  margin-right: 4px;
+  border-radius: 6px 6px 0 0;
+}
+.nav-tabs .nav-link:not(.active) {
+  background: #f7f7f7;
+}
+.panel-text { min-height: 5em; }
+</style>
+```
+
 ```{r}
 #| label: setup
 #| include: true
 #| code-fold: true
+#| message: false
+#| warning: false
 
-# This chunk sets global chunk options, loads packages, and defines helper
-# functions used throughout the supplement
+# ------------------------------------------------------------------------------
+# SETUP
+# This chunk:
+#   1) Sets global chunk options (figures, widths)
+#   2) Loads required packages
+#   3) Defines helper functions used throughout the supplement
+# ------------------------------------------------------------------------------
 
 knitr::opts_chunk$set(
   fig.align = "center",
@@ -68,19 +184,68 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(metafor)        # escalc(), rma.mv()
   library(here)           # robust file paths
-  library(orchaRd)        # orchard_plot(), bubble_plot()
+  library(orchaRd)        # orchard_plot(), bubble_plot(), .safe_lnM_indep()
   library(kableExtra)     # HTML tables
   library(patchwork)      # combining ggplots   
   library(multcomp)        # multiple comparisons
 })
 
-# Reproducibility: SAFE uses Monte Carlo draws (bootstrap), so we fix a seed once.
-set.seed(123)
+# ---- Ensure compatible orchaRd version -------------------------------------
+orchard_min_version <- "2.1.3"  # version that includes SAFE lnM + seed argument
 
-# loading SAFE function
-source(here("R", "SAFE_fun.R")) 
+if (packageVersion("orchaRd") < package_version(orchard_min_version)) {
+  stop(
+    "This tutorial requires orchaRd >= ", orchard_min_version, ".\n",
+    "Your version is ", packageVersion("orchaRd"), ".\n\n",
+    "Please update by running:\n",
+    "  install.packages('orchaRd')\n",
+    "or, if needed:\n",
+    "  remotes::install_github('daniel1noble/orchaRd')"
+  )
+}
 
-# ---- Folded normal helper (matches examples.R) ---------------------------
+# ---- Check that the required SAFE function is available ---------------------
+if (!exists(".safe_lnM_indep", where = asNamespace("orchaRd"), inherits = FALSE)) {
+  stop(
+    "This tutorial requires orchaRd:::.safe_lnM_indep(), but it was not found.\n",
+    "Please update orchaRd to a version that includes SAFE lnM."
+  )
+}
+
+# ---- SAFE lnM (orchaRd) -----------------------------------------------------
+# Note on purrr::pmap_dfr():
+# pmap_dfr() applies a function row-by-row to several input columns (m1i, m2i, sd1i, ...),
+# returning a data frame with one output row per effect size.
+#
+# Settings below match the simulation defaults used in this project.
+# Passing a fixed seed makes each SAFE estimate reproducible.
+
+get_lnM_safe <- function(m1, m2, s1, s2, n1, n2, 
+                         min_kept = 100000, 
+                         chunk_init = 5000, 
+                         seed=123) {  
+  out <- orchaRd:::.safe_lnM_indep(x1bar = m1, x2bar = m2,
+  sd1 = s1, sd2 = s2,
+  n1 = n1, n2 = n2,
+  min_kept = min_kept,
+  chunk_init = chunk_init,seed=seed)
+
+tibble::tibble(
+  yi_lnM_safe = out$lnM_SAFE,
+  vi_lnM_safe = out$var_lnM_SAFE,
+  draws_kept  = out$kept,
+  draws_total = out$total,
+  attempts    = out$attempts,
+  status      = out$status
+)
+}
+
+
+
+# ---- Folded-normal helper for magnitude of SMD ------------------------------
+# This converts a signed normal estimate (mu, var) into the expected magnitude
+# under the implied folded-normal distribution.
+
 folded_norm <- function(mu, var) {
   sigma  <- sqrt(var)
   if (sigma == 0) return(c(point = abs(mu), var = 0))
@@ -93,7 +258,10 @@ folded_norm <- function(mu, var) {
   c(point = meanFN, var = varFN)
 }
 
-# ---- lnM wrappers (match examples.R expectations) ------------------------
+# ---- Delta plug-in lnM (analytic) -------------------------------------------
+# IMPORTANT: This requires lnM_delta1_indep() to be available, source it here
+source(here("R", "SAFE_fun.R")) 
+
 get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
   out <- lnM_delta1_indep(m1, m2, s1, s2, n1, n2)   # returns c(point, var)
   tibble(
@@ -102,56 +270,58 @@ get_lnM_raw <- function(m1, m2, s1, s2, n1, n2) {
   )
 }
 
-get_lnM_safe <- function(m1, m2, s1, s2, n1, n2) {
-  out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2)     # returns list(point,var,kept,total)
-  tibble(
-    yi_lnM_safe = out$point,
-    vi_lnM_safe = out$var,
-    draws_kept  = out$kept,
-    draws_total = out$total
-  )
-}
+
 
 
 
 
 ```
 
+```{=html}
+<!--get_lnM_safe <- function(m1, m2, s1, s2, n1, n2,min_kept = 100000, chunk_init = 5000) {
+  out <- safe_lnM_indep(m1, m2, s1, s2, n1, n2,min_kept = min_kept,
+    chunk_init = chunk_init)     # returns list(point,var,kept,total)
+  tibble(
+    yi_lnM_safe = out$point,
+    vi_lnM_safe = out$var,
+    draws_kept  = out$kept,
+    draws_total = out$total
+  )
+}-->
+```
+
 # Overview
 
 This supplement has two parts:
 
-Part I — Worked examples (Examples 1–2).
+**Part I — Worked examples (Examples 1–2).**
 
 We demonstrate a complete, end-to-end workflow for quantifying effect magnitude using lnM. For each dataset, we first compute a conventional standardized mean difference (SMD) and compare results obtained using absolute SMD–based measures with those obtained using lnM.
 
-We then estimate lnM using two approaches:
+We note that we estimate lnM with two approaches:
 
 (i) a **Delta plug-in estimator** and
 (ii) the **SAFE bootstrap bias-corrected point estimate (SAFE-BC)** which is designed to remain usable when the plug-in estimator is undefined (e.g., when $MS_B \le MS_W$).
 
-Using these estimates, we fit multilevel meta-analytic models and meta-regressions and visualise results using the same plot types reported in the main manuscript.
+Using these estimates, we then fit multilevel meta-analytic models and meta-regressions and visualize results using the same plot types reported in the main manuscript.
 
-<!-- End-to-end demonstration of the lnM workflow in real datasets: compute standardized mean differences, convert to folded-normal magnitudes, then compute lnM using (i) Delta plug-in and (ii) SAFE bootstrap bias-corrected point estimate (SAFE-BC). We then fit multilevel meta-analytic models and produce the same types of figures used in the manuscript. -->
+**Part II — Simulation reproduction (Figures + Tables).**
 
-Part II — Simulation reproduction (Figures + Tables).
+We reproduce all simulation-based figures and tables reported in the manuscript using pre-computed simulation summaries and, where required, outputs from individual simulation replicates (i.e. results from each Monte Carlo run within a design cell). These results characterise estimator performance in terms of bias, variance behaviour, empirical coverage, root mean square error (RMSE), and Monte Carlo standard error (MCSE).
 
-We reproduce all simulation-based figures and tables reported in the manuscript using pre-computed simulation summaries and, where required, replicate-level outputs. These results characterise estimator performance in terms of bias, variance behaviour, empirical coverage, root mean square error (RMSE), and Monte Carlo standard error (MCSE).
-
-We additionally provide compact tables summarising estimator feasibility, numerical stability, and SAFE bootstrap acceptance rates across simulation designs
-
-<!--Load the simulation summary .rds and reproduce the manuscript/supplementary figures: point-estimate bias, variance relative bias, coverage, RMSE, and Monte-Carlo error diagnostics (MCSE). We also generate compact tables summarising acceptance rates, failure rates, and “worst offenders”.-->
+We additionally provide compact tables summarising estimator feasibility, numerical stability, and SAFE bootstrap acceptance rates across simulation designs.
 
 # Part I — Worked examples
 
-Part I illustrates how lnM is computed, analysed, and interpreted in real meta-analytic datasets, using two published examples with contrasting data structures.
-
+Part I illustrates how lnM is computed, analysed, and interpreted in real meta-analytic datasets using two published examples with contrasting data structures.
 
 ## Example 1 — Almeida et al nutrition dataset
 
-Almeida *et al.* examined whether experimental manipulations of nutrition produce consistently large deviations from control conditions across a range of physiological and performance traits. Because the biological interest lies in the magnitude of responses rather than their direction, this dataset provides a natural setting for comparing analyses based on absolute SMD measures with corresponding analyses based on lnM.
+Almeida *et al.* [-@almeida2021factors] examined whether experimental manipulations of nutrition produce consistently large deviations from control conditions across a range of physiological and performance traits. Because the biological interest lies in the magnitude of responses rather than their direction, this dataset provides a natural setting for comparing analyses based on absolute SMD measures with corresponding analyses based on lnM.
 
 ### Effect size calculations
+
+This section calculates four effect-size quantities from the same raw inputs (group means, SDs, and sample sizes). Each step adds new columns to `dat`.
 
 ```{r}
 #| label: load-data example 1
@@ -161,64 +331,132 @@ Almeida *et al.* examined whether experimental manipulations of nutrition produc
 dat <- read_csv(here("data", "data_almeida.csv"), show_col_types = FALSE)
 ```
 
-::: panel-tabset
-## Conventional SMD (signed effect size)
-
-```{r}
-#|label: escalc-smd
-dat <-  escalc(measure = "SMD", 
-               m1i = m1i, 
-               m2i = m2i, 
-               sd1i = sd1i, 
-               sd2i = sd2i, 
-               n1i = n1i, 
-               n2i = n2i,
-               data = dat, append = TRUE,
-               var.names = c("yi_d",   "vi_d"))
-```
-
-## Folded-normal magnitude of SMD 
-
-```{r}
-#| label: folded-normal-smd
-dat <- dat %>%                               
-  mutate(
-    abs_d   = map2_dfr(yi_d,   vi_d, ~ {
-      out <- folded_norm(.x, .y)
-      tibble(yi_d_abs   = out["point"], vi_d_abs   = out["var"])
-    })
-  ) %>%        # flatten the tibbles
-  unnest(c(abs_d))
-
-
-```
-
-## lnM via Delta plug-in estimator
-
-```{r}
-#| label: delta-lnM
-
-dat <- dat %>% mutate(
-  lnM_raw = pmap_dfr(
-    list(m1i, m2i, sd1i, sd2i, n1i, n2i),
-    get_lnM_raw)
-) %>% unnest(lnM_raw)
-```
-
-## lnM via SAFE (single-fit parametric bootstrap)
-
-```{r}
-#| label: SAFE-lnM
-# SAFE is stochastic, but the seed was set in the setup chunk for reproducibility
-dat <- dat %>% mutate(
-  lnM_safe = pmap_dfr(
-    list(m1i, m2i, sd1i, sd2i, n1i, n2i),
-    get_lnM_safe)
-) %>% unnest(lnM_safe)
-```
+::: callout-note
+| Type | Variable Names | Description |
+|:-----------------------|:-----------------------|:-----------------------|
+| **Inputs** (Group 1) | `m1i`, `sd1i`, `n1i` | Mean, SD, and Sample Size for Group 1 |
+| **Inputs** (Group 2) | `m2i`, `sd2i`, `n2i` | Mean, SD, and Sample Size for Group 2 |
+| **Output** (1) | `yi_d`, `vi_d` | Signed SMD |
+| **Output** (2) | `yi_d_abs`, `vi_d_abs` | Magnitude of SMD via folded-normal |
+| **Output** (3) | `yi_lnM_raw`, `vi_lnM_raw` | lnM via Delta plug-in |
+| **Output** (4) | `yi_lnM_safe`, `vi_lnM_safe` | lnM via SAFE |
 :::
 
-### How many lnM estimatescan be obtained?
+:::::::: columns
+:::: {.column width="49%"}
+::: panel-text
+## Conventional SMD (signed)
+
+We first compute the standardized mean difference (SMD). This is the conventional effect size used in many meta-analyses.\
+`metafor::escalc()` returns a *point estimate* (`yi_d`) and its *sampling variance* (`vi_d`).
+:::
+
+```{r}
+#| label: escalc-smdq
+#| message: false
+#| warning: false
+
+
+dat <- escalc(
+  measure = "SMD",
+  m1i = m1i, m2i = m2i,
+  sd1i = sd1i, sd2i = sd2i,
+  n1i = n1i, n2i = n2i,
+  data = dat, append = TRUE,
+  var.names = c("yi_d", "vi_d")
+)
+```
+::::
+
+::: {.column width="2%"}
+:::
+
+:::: {.column width="49%"}
+::: panel-text
+## Folded-normal magnitude of SMD
+
+Many researchers summarise “effect magnitude” by taking $|SMD|$. However, absolute values are biased upward, especially when sampling error is large.\
+Instead of taking $|SMD|$ directly, we use the folded-normal distribution implied by $(\hat{d}, \mathrm{Var}(\hat{d}))$, yielding `yi_d_abs` and `vi_d_abs`.
+:::
+
+```{r}
+#| label: folded-normal-smdq
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  mutate(
+    abs_d = map2_dfr(yi_d, vi_d, ~{
+      out <- folded_norm(.x, .y)
+      tibble(yi_d_abs = out["point"], vi_d_abs = out["var"])
+    })
+  ) %>%
+  unnest(abs_d)
+```
+::::
+::::::::
+
+::: callout-note
+**About `pmap_dfr()` (row-wise function application)**\
+`purrr::pmap_dfr()` applies a function once per row using multiple columns as inputs (e.g., means, SDs, and sample sizes), returning a data frame with one output row per effect size.
+:::
+
+:::::::: columns
+:::: {.column width="49%"}
+::: panel-text
+## lnM via Delta plug-in estimator
+
+We compute lnM using an analytic (Delta-method) plug-in estimator. This can be undefined near boundary conditions, which we diagnose later. The result is stored as `yi_lnM_raw` with sampling variance `vi_lnM_raw`.
+:::
+
+```{r}
+#| label: delta-lnMq
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  mutate(
+    lnM_raw = purrr::pmap_dfr(
+      list(m1i, m2i, sd1i, sd2i, n1i, n2i),
+      get_lnM_raw
+    )
+  ) %>%
+  unnest(lnM_raw)
+
+```
+::::
+
+::: {.column width="2%"}
+:::
+
+:::: {.column width="49%"}
+::: panel-text
+## lnM via SAFE
+
+We compute lnM using SAFE (single-fit parametric bootstrap), which is designed to remain usable when the plug-in estimator fails. The result is stored as `yi_lnM_safe` with sampling variance `vi_lnM_safe`.
+:::
+
+```{r}
+#| label: SAFE-lnMq
+#| message: false
+#| warning: false
+
+
+dat <- dat %>%
+  dplyr::mutate(
+    lnM_safe = purrr::pmap_dfr(
+      list(m1i, m2i, sd1i, sd2i, n1i, n2i),
+      get_lnM_safe
+    )
+  ) %>%
+  tidyr::unnest(lnM_safe)
+
+
+```
+::::
+::::::::
+
+### How many lnM estimates can be obtained?
 
 The Delta plug-in estimator of lnM can be undefined for some effect sizes, particularly near boundary conditions. SAFE is designed to be more robust in these cases by relying on a single-fit parametric bootstrap. The table below summarises (i) how often each method yields a usable lnM point estimate and sampling variance, and (ii) how often SAFE provides valid estimates in cases where the Delta plug-in estimator fails.
 
@@ -226,7 +464,7 @@ The Delta plug-in estimator of lnM can be undefined for some effect sizes, parti
 Percentages are computed relative to the total number of effect sizes in the dataset.
 :::
 
-Because lnM can be undefined when the between-group variance is not estimable, we first quantify how often each estimator returns usable lnM point estimates and sampling variances.
+Because lnM can be undefined when the between-group variance is not estimatable, we first quantify how often each estimator returns usable lnM point estimates and sampling variances.
 
 ```{r}
 #| label: lnM-availability-summary
@@ -287,49 +525,56 @@ summary_tbl %>%
   kableExtra::scroll_box(width = "100%", height = "400px")
 ```
 
+::: callout-tip
+Rows labelled “SAFE rescue” count effect sizes for which the Delta plug-in estimator failed but SAFE returned a valid estimate.
+:::
+
+This table shows that the Delta plug-in estimator fails to return a defined lnM point estimate or sampling variance for a substantial fraction of effect sizes in this dataset. In contrast, SAFE returns both a point estimate and a sampling variance for all effect sizes. As a result, SAFE “rescues” a large number of comparisons that would otherwise need to be excluded from lnM-based analyses.
+
 ### Meta-analysis model
 
-We fit the same multilevel random-effects structure for two magnitude metrics: (i) the folded-normal magnitude of SMD and (ii) lnM estimated with SAFE. 
-In both cases, effect sizes are nested within studies (random intercepts for *Study* and for the within-study effect-size ID).
+In this worked example we focus on **body condition** outcomes from the Almeida dataset. Almeida *et al.* report multiple outcome categories (e.g., condition and other trait classes); to keep the tutorial concrete and comparable across methods, we restrict to the `Category == "Condition"` subset.
+
+We then fit the same multilevel random-effects structure for two magnitude metrics: (i) the folded-normal magnitude of SMD and (ii) lnM estimated with SAFE. In both cases, effect sizes are nested within studies (random intercepts for `Study` and for the within-study effect-size ID, `ES.ID`).
 
 ```{r}
 #| label: subset-condition-example-1
 
-# Restrict to the "Condition" subset used in the worked example
 
-dat_cond <- dat %>% filter(Category == "Condition")
+dat_cond <- dat %>% filter(Category == "Condition") %>%
+  rename(exposure = magnitude)
 dim(dat_cond)
 ```
 
-::: panel-tabset
-## Absulte SMD (folded-normal magnitude)
-
-This model summarises the typical magnitude of effects using the folded-normal transformation of the standardized mean difference (SMD). Rather than taking the absolute value of SMD directly, this approach uses the implied folded-normal distribution to obtain an approximately unbiased estimate of effect magnitude.
-
+:::::: columns
+::: {.column width="49%"}
+## Absolute SMD (folded-normal)
+::: panel-text
+We meta-analyse the SMD magnitude using the folded-normal transformation.
+:::
 ```{r}
-# label: ma-abs-smd
-
+#| label: ma-abs-smd
+#| message: false
+#| warning: false
 
 ma_abs <- rma.mv(
-  yi   = yi_d_abs, 
-  V    = vi_d_abs,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
+  yi     = yi_d_abs,
+  V      = vi_d_abs,
+  random = list(~ 1 | Study, ~ 1 | ES.ID),
   data   = dat_cond,
-  method = "REML")
+  method = "REML",test   = "t"
+)
 
 summary(ma_abs)
 i2_ml(ma_abs)
+ml_m1(ma_abs)
 
-# We added an "Overall" row to orchard plot for visualization
-main <- mod_results(ma_abs, group = "Study")
+
+main <- orchaRd::mod_results(ma_abs, group = "Study")
 main <- unclass(main)
-main$mod_table$name <- "Overall" 
+main$mod_table$name <- "Overall"
 main$data$moderator <- "Overall"
 class(main) <- "orchard"
-
 
 p1 <- orchard_plot(main,  xlab = "abs(SMD)", 
                    group = "Study",
@@ -340,37 +585,39 @@ p1 <- orchard_plot(main,  xlab = "abs(SMD)",
 
 p1
 ```
+:::
 
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
 ## lnM (SAFE)
-
-This model summarises the typical magnitude of effects using lnM estimated via SAFE. SAFE is used because lnM can be undefined under the Delta plug-in approach for some effect sizes, particularly when between-group variability is not larger than within-group variability.
-
+::: panel-text
+We meta-analyse lnM using SAFE estimates.
+:::
 ```{r}
 #| label: ma-lnM-safe
+#| message: false
+#| warning: false
 
 ma_safe <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  random = list(~ 1 | Study, ~ 1 | ES.ID),
   data   = dat_cond,
-  method = "REML",
-  test = "t")
+  method = "REML", test   = "t"
+)
 
 summary(ma_safe)
 i2_ml(ma_safe)
 ml_m1(ma_safe)
 
 
-# Add an "Overall" row to the orchard object for visualization
-main2 <- mod_results(ma_safe, group = "Study")
+main2 <- orchaRd::mod_results(ma_safe, group = "Study")
 main2 <- unclass(main2)
-main2$mod_table$name <- "Overall" 
+main2$mod_table$name <- "Overall"
 main2$data$moderator <- "Overall"
 class(main2) <- "orchard"
-
 
 p2 <- orchard_plot(main2,  xlab = "lnM", 
                    group = "Study",
@@ -380,8 +627,10 @@ p2 <- orchard_plot(main2,  xlab = "lnM",
   scale_fill_manual(values = "#117733") 
 
 p2
+
 ```
 :::
+::::::
 
 ::: callout-note
 ## Interpreting lnM on an SMD scale
@@ -394,6 +643,7 @@ $d_{\mathrm{eq}}  \approx \sqrt{2} e^{\ln M}$
 #| label: lnm-to-deq-approx
 #| message: false
 #| warning: false
+#| code-fold: true
 
 lnm_to_deq_approx <- function(model, label = "model") {
   b0_hat <- as.numeric(coef(model)[1])
@@ -417,294 +667,390 @@ lnm_to_deq_approx <- function(model, label = "model") {
 lnm_to_deq_approx(ma_safe, label = "Overall model (ma_safe)")
 ```
 
-Because the transformation is monotone, confidence intervals for  $d_{\mathrm{eq}}$ can be obtained by transforming the corresponding lnM interval endpoints
+Because this transformation is monotone (larger lnM always implies larger $d_{\mathrm{eq}}$), we can obtain a 95% interval for $d_{\mathrm{eq}}$ by transforming the lower and upper endpoints of the lnM interval.
 :::
+In the Almeida dataset, the folded-normal SMD magnitude is constrained to be non-negative and many estimates accumulate near zero, with a small number of extreme values extending the upper tail. lnM, in contrast, is defined on an unbounded scale and spreads effect magnitudes more evenly, making between-study differences in overall magnitude easier to resolve when direction is not of primary interest.
 
 ### Meta-regression
 
-We next examine whether variation in effect magnitude is associated with study-level covariates. Specifically, we regress the magnitude metric on *magnitude*, *duration*, and *Recovery* while retaining the same multilevel structure (random intercepts for *Study* and within-study effect-size ID). This allows a direct comparison of moderator patterns under a conventional absolute-value magnitude metric versus lnM.
+We next examine whether variation in effect magnitude is associated with study-level covariates. Specifically, we regress each magnitude metric on exposure intensity, exposure duration, and recovery period while retaining the same multilevel structure (random intercepts for `Study` and within-study effect-size ID, `ES.ID`).
 
-:::: panel-tabset
-## Absolute SMD (folded-normal magnitude)
+:::::: columns
+::: {.column width="49%"}
+## Absolute SMD (folded-normal)
 
 ```{r}
 #| label: mod-abs-smd
+#| message: false
+#| warning: false
+
 mod_abs <- rma.mv(
-  yi   = yi_d_abs, 
+  yi   = yi_d_abs,
   V    = vi_d_abs,
-  mods = ~ magnitude + duration + Recovery,
-  random =  list(
+  mods = ~ exposure + duration + Recovery,
+  random = list(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
   data   = dat_cond,
-  method = "REML",
-  test = "t")
+  method = "REML", test   = "t"
+  )
+
 summary(mod_abs)
 
-# bubble plot
-p3 <- bubble_plot(mod_abs, mod = "Recovery", 
-                  ylab = "abs(SMD)", 
-                  xlab = "Recovery period", 
-                  group = "Study") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#CC6677") 
+p3 <- bubble_plot(
+  mod_abs, mod = "Recovery",
+  ylab = "abs(SMD)",
+  xlab = "Recovery period",
+  group = "Study"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#CC6677")
 
 p3
 ```
+:::
 
-## lnM
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM (SAFE)
 
 ```{r}
 #| label: mod-lnM-safe
+#| message: false
+#| warning: false
+
 mod_safe <- rma.mv(
-  yi   = yi_lnM_safe, 
+  yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
-  mods = ~ magnitude + duration + Recovery,
-  random =  list(
+  mods = ~ exposure + duration + Recovery,
+  random = list(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
   data   = dat_cond,
-  method = "REML",
-  test = "t")
+  method = "REML", test   = "t"
+)
 
 summary(mod_safe)
-# bubble plot
-p4 <- bubble_plot(mod_safe, mod = "Recovery", 
-                  ylab = "lnM", 
-                  xlab = "Recovery period", 
-                  group = "Study",
-                  legend.pos = "bottom.left") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+
+p4 <- bubble_plot(
+  mod_safe, mod = "Recovery",
+  ylab = "lnM",
+  xlab = "Recovery period",
+  group = "Study", legend.pos = "bottom.left"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
+
 p4
 ```
-
-
-::::
-
-### Egger regression (small-study effects diagnostic)
-
-We use an Egger-style meta-regression to assess whether estimated effect magnitudes systematically vary with study size (a pattern that can be consistent with small-study effects and publication bias). For lnM, using the usual standard-error-based predictor is problematic because lnM and its estimated standard error can be mechanically related. We therefore use a *sample-size-based* predictor derived from the harmonic mean sample size,
-
-$n_0=\frac{n_1 n_2}{n_1+n_2}$,
-
-and fit models using  $1/\sqrt{n_0}$ (an SE-analogue) and $1/n_0$ (a variance-analogue). These predictors depend only on sample sizes and avoid structural dependence on the observed lnM.
-
-::: {.callout-important}
-Because lnM estimates and their sampling standard errors are both functions of the same underlying variance components, they are structurally dependent. Using the sampling standard error as a predictor in Egger-type regressions would therefore violate the independence assumptions of the test.
 :::
+::::::
 
-### Egger regression (publication bias test)
+The folded-normal SMD magnitude is bounded at zero and shows strong compression near the lower end of the scale, which can attenuate moderator slopes. lnM is unbounded and approximately normal, providing greater dynamic range and making moderator relationships (e.g., with recovery period) easier to detect and interpret under the same multilevel structure.
+
+### Small-study effects diagnostic
+
+We use an Egger-style meta-regression [@egger1997bias] to assess whether estimated effect magnitudes systematically vary with study size, a pattern that can be consistent with small-study effects (including publication bias). In this approach, effect sizes are regressed on a measure of study precision rather than being compared visually in a funnel plot.
+
+For lnM, using the usual sampling standard error as a predictor is problematic because lnM and its estimated standard error are both functions of the same underlying variance components. This creates a structural dependence between the response and predictor that violates the assumptions of Egger-type regressions. Following recent recommendations for multilevel meta-analyses, we therefore use a *sample-size-based* measure of precision instead [@nakagawa2022methods].
+
+We define the harmonic-mean (or “effective”) sample size as:
+
+$$
+n_0 = \frac{n_1 n_2}{n_1 + n_2}
+$$
+
+and fit two related models using:
+
+-   **1 / sqrt(n₀)**, an *SE-analogue*, to test for the presence of small-study effects; and\
+-   **1 / n₀**, a *variance-analogue*, to obtain a bias-adjusted overall effect estimate if evidence of small-study effects is detected.
+
+Both predictors depend only on sample sizes and are therefore independent of the observed lnM values themselves. This allows small-study effects to be assessed without inducing artefactual correlations between effect sizes and their precision.
+
+### Worked example: Egger-style models using n₀
 
 ```{r}
 #| label: ex1-egger-setup
+#| message: false
+#| warning: false
 # Create sample-size-based predictors using the harmonic mean sample size n0
 dat_cond$n0 <- (dat_cond$n1i * dat_cond$n2i) / (dat_cond$n1i + dat_cond$n2i)
 dat_cond$nSE <- 1 / sqrt(dat_cond$n0)
 dat_cond$nV <- 1 / dat_cond$n0
 ```
 
-:::: panel-tabset
-## Absulte SMD
+::: callout-note
+### How to read these models
+
+The models using **1 / sqrt(n₀)** test for the presence of small-study effects (Egger-style slope test).\
+The model using **1 / n₀** provides a bias-adjusted estimate of the overall effect size, evaluated at infinite sample size.
+:::
+
+:::::: columns
+::: {.column width="49%"}
+## Absolute SMD (folded-normal; 1/ sqrt(n₀))
 
 ```{r}
-# using abs(d)
+#| label: ex1-egger-abs-smd
+#| message: false
+#| warning: false
+
 egger_abs <- rma.mv(
   yi   = yi_d_abs, 
   V    = vi_d_abs,
   mods = ~ nSE,
-  random =  list(
+  random = list(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
   data   = dat_cond,
   method = "REML",
-  test = "t")
-summary(egger_abs)
-# bubble plot
-p5 <- bubble_plot(egger_abs, mod = "nSE", 
-                  ylab = "abs(SMD)", 
-                  xlab = "sqrt(inverse sample size)",
-                  group = "Study") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#CC6677") 
+  test   = "t"
+)
 
+summary(egger_abs)
+
+p5 <- bubble_plot(
+  egger_abs, mod = "nSE",
+  ylab = "abs(SMD)",
+  xlab = "sqrt(inverse sample size)",
+  group = "Study"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#CC6677")
 
 p5
 ```
+:::
 
-## lnM (1/sqrt(n0))
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM (SAFE; 1 / sqrt(n₀))
 
 ```{r}
 #| label: ex1-egger-lnM-safe
+#| message: false
+#| warning: false
 
 egger_safe <- rma.mv(
   yi   = yi_lnM_safe, 
   V    = vi_lnM_safe,
   mods = ~ nSE,
-  random =  list(
+  random = list(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
   data   = dat_cond,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
+
 summary(egger_safe)
-# bubble plot
-p6 <-bubble_plot(egger_safe, mod = "nSE", 
-                 ylab = "lnM", 
-                 xlab = "sqrt(inverse sample size)", 
-                 group = "Study",
-                 legend.pos = "bottom.right") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+
+p6 <- bubble_plot(
+  egger_safe, mod = "nSE",
+  ylab = "lnM",
+  xlab = "sqrt(inverse sample size)",
+  group = "Study",legend.pos = "bottom.right"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
 
 p6
-
-
 ```
+:::
+::::::
+For the folded-normal absolute SMD, the fitted slope is shallow and the bulk of estimates cluster near the lower bound of the scale, indicating limited sensitivity of absolute SMD to study size and little ability to distinguish small-study effects. In contrast, lnM exhibits a clearer positive association with 1 / sqrt(n₀), with smaller effective sample sizes corresponding to larger estimated magnitudes. This pattern indicates the presence of small-study effects for lnM and illustrates that lnM provides a wider dynamic range for diagnosing size-related structure in effect magnitudes under the same multilevel model.
+::::::: columns
+::: {.column width="25%"}
+:::
 
-## lnM (1/n0)
+:::: {.column width="50%"}
+## lnM (SAFE; 1 / n₀ — bias-adjusted estimate)
 
 ```{r}
+
 #| label: ex1-egger-lnM-safe-2
-# This specification uses the variance-analogue predictor 
+#| message: false
+#| warning: false
+
+# Variance-analogue specification for bias adjustment
 egger_safe2 <- rma.mv(
   yi   = yi_lnM_safe,
   V    = vi_lnM_safe,
   mods = ~ nV,
-  random =  list(
+  random = list(
     ~ 1 | Study,
     ~ 1 | ES.ID
   ),
   data   = dat_cond,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
+
 summary(egger_safe2)
-# bubble plot
-bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", 
-            xlab = "Inverse sample size", group = "Study") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+
+bubble_plot(
+  egger_safe2, mod = "nV",
+  ylab = "lnM",
+  xlab = "inverse sample size",
+  group = "Study"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
+
 ```
 
 ::: callout-note
 ## Mapping lnM to an SMD-equivalent effect size
 
-For interpretability, we express lnM on a scale comparable to the standardized mean difference (SMD). Using the large-sample approximation ($d_{\mathrm{eq}}$), we get
+For interpretability, we convert the intercept from the **1 / n₀** model (the bias-adjusted lnM) to an SMD-equivalent magnitude using the large-sample approximation.
 
 ```{r}
 #| label: lnm-to-deq-approx-egger
 lnm_to_deq_approx(egger_safe2, "Egger-style model (egger_safe2)")
 ```
-
-indicating a substantially smaller average effect than conventional absolute-SMD estimates. 
 :::
 ::::
+
+::: {.column width="25%"}
+:::
+:::::::
 
 ### Sensitivity analysis
 
-We repeated the lnM analyses after restricting effect sizes to comparisons with total sample size $n_1 + n_2 \geq 40$
+We repeated the lnM analyses after restricting effect sizes to comparisons with total sample size **n₁ + n₂ ≥ 40**.
 
 ```{r}
 #| label: ex1-sensitivity-subset
-dat_cond_sens <- dat_cond %>% filter((n1i + n2i) >= 40)
+#| message: false
+#| warning: false
+
+dat_cond_sens <- dat_cond %>% dplyr::filter((n1i + n2i) >= 40)
+dim(dat_cond_sens)
 ```
 
-:::: panel-tabset
-## lnM: meta-analysis
+### lnM: meta-analysis (sensitivity subset)
 
 ```{r}
 #| label: ma-lnM-safe-sens
+#| message: false
+#| warning: false
+
 ma_safe_sens <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
+  yi     = yi_lnM_safe, 
+  V      = vi_lnM_safe,
+  random = list(~ 1 | Study, ~ 1 | ES.ID),
   data   = dat_cond_sens,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
 
 summary(ma_safe_sens)
-
-
 i2_ml(ma_safe_sens)
 
-orchard_plot(ma_safe_sens,  xlab = "lnM", group = "Study")
+orchard_plot(ma_safe_sens, xlab = "lnM", group = "Study")
 ```
+
 ::: callout-note
 ## Mapping lnM to an SMD-equivalent effect size
+
 ```{r}
 #| label: lnm-to-deq-approx-sens
-lnm_to_deq_approx(ma_safe_sens, "Sensitivity model (ma_safe_sens)")
+#| message: false
+#| warning: false
+
+lnm_to_deq_approx(ma_safe_sens, "Sensitivity model (n₁ + n₂ ≥ 40)")
 ```
 :::
-## lnM meta-regression
 
-::: panel-tabset
-## Orginal meta-regression
+#### lnM: meta-regression (main vs sensitivity)
+
+To compare moderator patterns, we fit the same meta-regression model to the full dataset and to the sensitivity subset.
+
+:::::: columns
+::: {.column width="49%"}
+## Main dataset
 
 ```{r}
-#| label: mod-lnM-safe-sens1
-mod_safe2 <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  mods = ~ magnitude + duration + Recovery + nSE,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
+#| label: mod-lnM-safe-main
+#| message: false
+#| warning: false
+
+mod_safe_main <- rma.mv(
+  yi     = yi_lnM_safe, 
+  V      = vi_lnM_safe,
+  mods   = ~ exposure + duration + Recovery + nSE,
+  random = list(~ 1 | Study, ~ 1 | ES.ID),
   data   = dat_cond,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
 
-summary(mod_safe2)
-r2_ml(mod_safe2)
+summary(mod_safe_main)
+r2_ml(mod_safe_main)
 
-bubble_plot(mod_safe2, mod = "Recovery", 
-            ylab = "lnM", 
-            xlab = "Recovery period", 
-            group = "Study",
-            legend.pos = "bottom.left") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+bubble_plot(
+  mod_safe_main, mod = "Recovery",
+  ylab = "lnM",
+  xlab = "Recovery period",
+  group = "Study",
+  legend.pos = "bottom.left"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
 ```
+:::
 
-## Sensitivity meta-regression
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## Sensitivity subset (n₁ + n₂ ≥ 40)
 
 ```{r}
 #| label: mod-lnM-safe-sens
-mod_safe2 <- rma.mv(
-  yi   = yi_lnM_safe, 
-  V    = vi_lnM_safe,
-  mods = ~ magnitude + duration + Recovery + nSE,
-  random =  list(
-    ~ 1 | Study,
-    ~ 1 | ES.ID
-  ),
+#| message: false
+#| warning: false
+
+mod_safe_sens <- rma.mv(
+  yi     = yi_lnM_safe, 
+  V      = vi_lnM_safe,
+  mods   = ~ exposure + duration + Recovery + nSE,
+  random = list(~ 1 | Study, ~ 1 | ES.ID),
   data   = dat_cond_sens,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
 
-summary(mod_safe2)
-r2_ml(mod_safe2)
+summary(mod_safe_sens)
+r2_ml(mod_safe_sens)
 
-bubble_plot(mod_safe2, mod = "Recovery", 
-            ylab = "lnM", 
-            xlab = "Recovery period", 
-            group = "Study",
-            legend.pos = "bottom.left") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+bubble_plot(
+  mod_safe_sens, mod = "Recovery",
+  ylab = "lnM",
+  xlab = "Recovery period",
+  group = "Study",
+  legend.pos = "bottom.left"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
+
 ```
 :::
-::::
+::::::
+
+These sensitivity results indicate that lnM-based inferences are robust to the exclusion of small-sample comparisons.
 
 ### Figure 3
+
+Figure 3 collates the three analyses above (overall model, meta-regression, and small-study effects diagnostic) to highlight how inference differs when magnitude is quantified using folded-normal SMD versus lnM (SAFE).
 
 ```{r}
 #| label: ex1-figure-3
@@ -712,116 +1058,163 @@ bubble_plot(mod_safe2, mod = "Recovery",
 # Row 1: overall meta-analyses (absolute SMD vs lnM)
 # Row 2: meta-regressions (absolute SMD vs lnM)
 # Row 3: Egger-style diagnostics (absolute SMD vs lnM)
-(p1 + p2) / (p3 + p4) / (p5 + p6) + plot_annotation(tag_levels = 'A') & theme(plot.tag = element_text(size = 16, face = "bold"))
+(p1 + ggtitle("SMD estimates") + p2 + ggtitle("lnM estimates")) / 
+  (p3 + p4) / 
+  (p5 + p6) + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 16, face = "bold"))
 ```
 
 ## Example 2 — Kunc & Schmidt anthropogenic noise dataset
 
-For this dataset, the underlying research question was whether exposure to anthropogenic noise alters animal behaviour and physiology relative to control (quiet) conditions. Each effect size contrasts a noise treatment with a control group, allowing the magnitude of noise-induced responses to be synthesised across taxa and response variables.
+This dataset synthesises experiments testing whether exposure to **anthropogenic noise** alters animal behaviour or physiology relative to control (quiet) conditions [@kunc2019effects]. Each effect size contrasts a noise treatment with a control group. In many applications the direction of change can also be important; here, we focus on **magnitude** to illustrate how lnM can summarise the strength of responses across taxa and response variables.
 
 ### Effect size calculations
 
+This section mirrors Example 1. We compute a conventional standardized mean difference (here using the unequal-variance variant, SMDH), its folded-normal magnitude, and lnM using both the Delta plug-in and SAFE.
+
 ```{r}
-#| label: load-data example 2
-#| 
-# Workflow mirrors Example 1:
-#   1) Load + basic cleaning
-#   2) Compute SMD (here using unequal-variance SMDH)
-#   3) Compute folded-normal magnitude of SMD
-#   4) Compute lnM via Delta plug-in and via SAFE
+#| label: load-data-example-2
+#| message: false
+#| warning: false
 
 # Load data
-data<-read.csv(here("data", "kunc_2019.csv"), na.strings=c("","NA"))
-data<-as.data.frame(data)
+dat_raw <- read.csv(here("data", "kunc_2019.csv"), na.strings = c("", "NA")) %>%
+  as.data.frame()
 
+# Basic cleaning: keep rows with species info and usable SDs
+dat_raw <- dat_raw %>%
+  dplyr::filter(!is.na(species.latin), species.latin != "NA") %>%
+  dplyr::mutate(
+    sd.control = as.numeric(as.character(sd.control)),
+    sd.noise   = as.numeric(as.character(sd.noise))
+  ) %>%
+  dplyr::filter(!is.na(sd.control), !is.na(sd.noise))
 
-# 2) Basic cleaning: exclude rows with missing species information
-data.2 <-data[which(data$species.latin!="NA"),]                
-
-
-# 3) Ensure SD fields are numeric
-
-data.2$sd.control<-as.numeric(as.character(data.2$sd.control))
-data.2$sd.noise<-as.numeric(as.character(data.2$sd.noise))
-
-# Exclude rows where sd.control is missing (cannot compute SMD/lnM)
-
-data.2 <- data.2[which(!is.na(data.2$sd.control)),]
-
-
-
+dim(dat_raw)
 
 ```
 
-::: panel-tabset
-
-##  Standardized mean difference with unequal variances (SMDH)
-```{r}
-
-# (Heteroscedastic SMD variant implemented in metafor)
-dat <- escalc(measure="SMDH", 
-              m1i=mean.control, sd1i=sd.control, n1i=sample.size.control, 
-              m2i=mean.noise, sd2i=sd.noise,  n2i=sample.size.noise.1,
-              data=data.2,
-              append = TRUE,
-              var.names = c("yi_d",   "vi_d"))
-
-# Remove rows where effect size could not be computed
-dat <- dat[which(!is.na(dat$yi_d)),]
-
-
-```
-
-
-## Folded-normal magnitude of SMD
-
-```{r}
- 
-dat <- dat %>%                                   
-  mutate(
-    abs_d   = map2_dfr(yi_d,   vi_d,   ~ {
-      out <- folded_norm(.x, .y)
-      tibble(yi_d_abs   = out["point"], vi_d_abs   = out["var"])
-    })) %>%
-  unnest(abs_d)
-
-
-```
-
-## lnM via Delta plug-in estimator
-```{r}
-# 6) 
-dat <- dat %>% mutate(
-  lnM_raw = pmap_dfr(
-    list(mean.control, mean.noise, sd.control, sd.noise, sample.size.control, sample.size.noise.1),
-    get_lnM_raw)
-) %>% unnest(lnM_raw)
-
-
-```
-
-## lnM via SAFE (single-fit parametric bootstrap)
-```{r}
-
-dat <- dat %>% mutate(
-  lnM_safe = pmap_dfr(
-    list(mean.control, mean.noise, sd.control, sd.noise, sample.size.control, sample.size.noise.1),
-    get_lnM_safe)
-) %>% unnest(lnM_safe)
-```
-
-
+::: callout-note
+| Type | Variable Names | Description |
+|:-----------------------|:-----------------------|:-----------------------|
+| **Inputs (Control)** | `mean.control`, `sd.control`, `sample.size.control` | Mean, SD, and Sample Size in control condition |
+| **Inputs (Noise)** | `mean.noise`, `sd.noise`, `sample.size.noise.1` | Mean, SD, and Sample Size in noise condition |
+| **Output (1)** | `yi_d`, `vi_d` | Signed SMDH |
+| **Output (2)** | `yi_d_abs`, `vi_d_abs` | Magnitude of SMDH via folded-normal |
+| **Output (3)** | `yi_lnM_raw`, `vi_lnM_raw` | lnM via Delta plug-in |
+| **Output (4)** | `yi_lnM_safe`, `vi_lnM_safe` | lnM via SAFE |
 :::
 
+:::::: columns
+::: {.column width="49%"}
+## Standardized mean difference
+::: panel-text
+We compute an unequal-variance standardized mean difference (SMDH) using metafor::escalc(). This returns a point estimate (yi_d) and sampling variance (vi_d).
+:::
+```{r}
+#| label: ex2-escalc-smdh
+#| message: false
+#| warning: false
 
-### How many lnM can be obtained?
+dat <- escalc(
+  measure = "SMDH",
+  m1i = mean.control, sd1i = sd.control, n1i = sample.size.control,
+  m2i = mean.noise,   sd2i = sd.noise,   n2i = sample.size.noise.1,
+  data = dat_raw, append = TRUE,
+  var.names = c("yi_d", "vi_d")
+) %>%
+  dplyr::filter(is.finite(yi_d), is.finite(vi_d))
+```
+:::
+
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## Folded-normal magnitude of SMDH
+::: panel-text
+We convert the signed SMDH into a magnitude measure using the folded-normal transformation.
+:::
+```{r}
+
+
+
+#| label: ex2-folded-normal-smd
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  dplyr::mutate(
+    abs_d = purrr::map2_dfr(yi_d, vi_d, ~{
+      out <- folded_norm(.x, .y)
+      tibble::tibble(yi_d_abs = out["point"], vi_d_abs = out["var"])
+    })
+  ) %>%
+  tidyr::unnest(abs_d)
+```
+:::
+::::::
+
+:::::: columns
+::: {.column width="49%"}
+## lnM via Delta plug-in estimator
+::: panel-text
+We compute lnM using the analytic (Delta-method) plug-in estimator. This can be undefined near boundary conditions.
+:::
+```{r}
+#| label: ex2-delta-lnm
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  dplyr::mutate(
+    lnM_raw = purrr::pmap_dfr(
+      list(mean.control, mean.noise, sd.control, sd.noise,
+           sample.size.control, sample.size.noise.1),
+      get_lnM_raw
+    )
+  ) %>%
+  tidyr::unnest(lnM_raw)
+
+```
+:::
+
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM via SAFE
+::: panel-text
+We compute lnM using SAFE (single-fit parametric bootstrap).
+:::
+```{r}
+#| label: ex2-safe-lnm
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  dplyr::mutate(
+    lnM_safe = purrr::pmap_dfr(
+      list(mean.control, mean.noise, sd.control, sd.noise,
+           sample.size.control, sample.size.noise.1),
+      get_lnM_safe
+    )
+  ) %>%
+  tidyr::unnest(lnM_safe)
+
+```
+:::
+::::::
+
+### How many lnM estimates can be obtained?
 
 ```{r}
-#| label: rescued-summary_ex2
+#| label: lnM-availability-summary-ex2
 #| message: false
 #| warning: false
 #| code-fold: true
-#| 
+
 stopifnot(exists("dat"), is.data.frame(dat))
 
 n_total <- nrow(dat)
@@ -847,411 +1240,504 @@ summary_tbl <- tibble::tibble(
   )
 ) %>%
   dplyr::mutate(
-    Percent = dplyr::if_else(
-      Metric == "Total effect sizes",
-      NA_real_,
-      100 * Count / n_total
-    )
+    Percent = dplyr::if_else(Metric == "Total effect sizes", NA_real_, 100 * Count / n_total)
   )
 
-# Headline numbers (reported in text)
 n_saved <- sum(!is.na(dat$yi_lnM_safe))
 p_saved <- 100 * n_saved / n_total
 
 cat(sprintf(
-  "\n\n**SAFE produced usable lnM point estimates for %d/%d effect sizes (%.1f%%).**\n\n",
+  "\n\n**SAFE produced defined lnM point estimates for %d/%d effect sizes (%.1f%%).**\n\n",
   n_saved, n_total, p_saved
 ))
 
 summary_tbl %>%
   kableExtra::kable(
     digits = 1,
-    caption = "Data availability for lnM estimates in the Kunc & Schmidt dataset: Delta plug-in versus SAFE (counts and % of all effect sizes).",
+    caption = "Data availability for lnM estimates (Example 2): Delta plug-in vs SAFE (counts and % of all effect sizes).",
     align = c("l", "r", "r")
   ) %>%
-  kableExtra::kable_styling(full_width = FALSE)
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::scroll_box(width = "100%", height = "400px")
 ```
 
 ### Meta-analysis model
 
+We focus on the main taxa retained in the worked example (birds, mammals, amphibians, and fish), excluding groups with very sparse representation.
+
 ```{r}
+
+
 #| label: ex2-filter-taxa
-# Restrict to the focal taxa used in the worked example
-# (exclude groups with very sparse representation in this dataset)
-dat<-dat[which(dat$taxon.for.plot!="reptilia" & 
-                 dat$taxon.for.plot!="mollusca" & 
-                 dat$taxon.for.plot!="arthropoda"),]
+#| message: false
+#| warning: false
+
+dat <- dat %>%
+  dplyr::filter(!taxon.for.plot %in% c("reptilia", "mollusca", "arthropoda"))
+
+
 ```
 
-::: panel-tabset
-## Absolute SMD (folded-normal magnitude)
+:::::: columns
+::: {.column width="49%"}
+## Absolute SMD (folded-normal)
 
 ```{r}
-#|label: ma-abs-smd-ex2
-ma_abs <- rma.mv(
-  yi   = yi_d_abs, 
-  V    = vi_d_abs,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| label: ma-abs-smd-ex2
+#| message: false
+#| warning: false
+
+ma_abs_ex2 <- rma.mv(
+  yi     = yi_d_abs,
+  V      = vi_d_abs,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(ma_abs)
-i2_ml(ma_abs)
+  test   = "t"
+)
 
+summary(ma_abs_ex2)
+i2_ml(ma_abs_ex2)
 
-# Add an "Overall" row to the orchard object for visualization
-
-main <- mod_results(ma_abs, group = "study")
+main <- orchaRd::mod_results(ma_abs_ex2, group = "study")
 main <- unclass(main)
-main$mod_table$name <- "Overall" 
+main$mod_table$name <- "Overall"
 main$data$moderator <- "Overall"
 class(main) <- "orchard"
 
-p7 <- orchard_plot(main,  xlab = "abs(SMD)", 
-                   group = "study",
-                   trunk.size = 0.6,
-                   branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#CC6677") 
-
+p7 <- orchard_plot(main, xlab = "Folded-normal SMD magnitude", group = "study",
+                   trunk.size = 0.6, branch.size = 5) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#CC6677")
 p7
 ```
+:::
 
-## lnM
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM (SAFE)
 
 ```{r}
-#label: ma-lnM-safe-ex2
-ma_safe <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| label: ma-lnM-safe-ex2
+#| message: false
+#| warning: false
+
+ma_safe_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(ma_safe)
-i2_ml(ma_safe)
+  test   = "t"
+)
 
-# Add an "Overall" row to the orchard object for visualization
-main2 <- mod_results(ma_safe, group = "study")
+summary(ma_safe_ex2)
+i2_ml(ma_safe_ex2)
+
+main2 <- orchaRd::mod_results(ma_safe_ex2, group = "study")
 main2 <- unclass(main2)
-main2$mod_table$name <- "Overall" 
+main2$mod_table$name <- "Overall"
 main2$data$moderator <- "Overall"
 class(main2) <- "orchard"
 
-
-p8 <- orchard_plot(main2,  xlab = "lnM", 
-                   group = "study",
-                   trunk.size = 0.8,
-                   branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
-
-
+p8 <- orchard_plot(main2, xlab = "lnM", group = "study",
+                   trunk.size = 0.8, branch.size = 5) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
 p8
 ```
+:::
+::::::
+
 ::: callout-note
 ## Mapping lnM to an SMD-equivalent effect size
+
 ```{r}
 #| label: lnm-to-deq-approx-ex2
-lnm_to_deq_approx(ma_safe, "Overall model (ma_safe)")
+#| message: false
+#| warning: false
+
+lnm_to_deq_approx(ma_safe_ex2, "Overall model (Example 2)")
 ```
 :::
-:::
+In this example, absolute SMD estimates again cluster near the lower bound of the scale, with a small number of extreme values dominating visual spread. By contrast, lnM produces a more symmetric and dispersed distribution of magnitudes, allowing differences in response strength across studies to be more clearly resolved. As in Example 1, this illustrates how lnM can summarise the magnitude of treatment effects across heterogeneous outcomes while retaining a scale that is better suited for synthesis and model-based inference.
 
 ### Meta-regression
 
-::: panel-tabset
+We next examine whether effect magnitudes vary across broad taxonomic groups. Here, `taxon.for.plot` is treated as a categorical moderator (with `- 1` so each group mean is estimated directly).
+
+:::::: columns
+::: {.column width="49%"}
 ## Absolute SMD (folded-normal magnitude)
 
 ```{r}
 #| label: mod-abs-smd-ex2
-# Meta-regression using folded-normal |SMD| with taxonomic group as a categorical moderator.
-# The "- 1" removes the intercept so each taxon level is estimated as its own mean.
-mod_abs <- rma.mv(
-  yi   = yi_d_abs, 
-  V    = vi_d_abs,
-  mods = ~ taxon.for.plot - 1,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| message: false
+#| warning: false
+
+mod_abs_ex2 <- rma.mv(
+  yi     = yi_d_abs,
+  V      = vi_d_abs,
+  mods   = ~ taxon.for.plot - 1,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(mod_abs)
-# orchard plot
-p9 <- orchard_plot(mod_abs, 
-                   mod = "taxon.for.plot", 
-                   xlab = "abs(SMD)", 
-                   group = "study",
-                   trunk.size = 0.6,
-                   branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = rep("#CC6677", 4))
+  test   = "t"
+)
 
-# multiple comparisons (Tukey-style contrasts among taxon means)
-summary(glht(mod_abs, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
+summary(mod_abs_ex2)
+
+p9 <- orchard_plot(
+  mod_abs_ex2,
+  mod = "taxon.for.plot",
+  xlab = "Folded-normal SMD magnitude",
+  group = "study",
+  trunk.size = 0.6,
+  branch.size = 5
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = rep("#CC6677", 4))
 
 p9
 
-```
 
-## lnM
-
-```{r}
-#| label: mod-lnM-safe-ex2
-mod_safe <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  mods = ~ taxon.for.plot -1,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
-  data   = dat,
-  method = "REML",
-  test = "t")
-summary(mod_safe)
-# orchard plot
-p10 <- orchard_plot(mod_safe, 
-                    mod = "taxon.for.plot", 
-                    xlab = "lnM", 
-                    group = "study",
-                    trunk.size = 0.6,
-                    branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = rep("#117733", 4)) 
-# multiple comparisons
-summary(glht(mod_safe, linfct=cbind(contrMat(rep(1,4), type="Tukey"))), test=adjusted("none"))
-
-p10
+#Pairwise comparisons among taxon means (Tukey-type)
+summary(
+  glht(mod_abs_ex2, linfct = cbind(contrMat(rep(1, 4), type = "Tukey"))),
+  test = adjusted("none")
+)
 ```
 :::
 
-### Egger regression (publication bias test)
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM (SAFE)
+
+```{r}
+#| label: mod-lnM-safe-ex2
+#| message: false
+#| warning: false
+
+mod_safe_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  mods   = ~ taxon.for.plot - 1,
+  random = list(~ 1 | study, ~ 1 | case.nr),
+  data   = dat,
+  method = "REML",
+  test   = "t"
+)
+
+summary(mod_safe_ex2)
+
+p10 <- orchard_plot(
+  mod_safe_ex2,
+  mod = "taxon.for.plot",
+  xlab = "lnM (SAFE)",
+  group = "study",
+  trunk.size = 0.6,
+  branch.size = 5
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = rep("#117733", 4))
+
+p10
+
+#Pairwise comparisons among taxon means (Tukey-type)
+summary(
+  glht(mod_safe_ex2, linfct = cbind(contrMat(rep(1, 4), type = "Tukey"))),
+  test = adjusted("none")
+)
+```
+:::
+::::::
+Using folded-normal SMDs, group means are strongly compressed toward zero and heavily influenced by a small number of extreme values, resulting in substantial overlap among taxa and limited ability to distinguish typical response magnitudes. In contrast, lnM yields a wider and more symmetric distribution of effect magnitudes within groups, revealing clearer separation among taxa and reducing the influence of extreme observations.
+
+### Small-study effects diagnostic
+
+We use the same approach as in Example 1.
 
 ```{r}
 #| label: ex2-egger-setup
-# Create sample-size-based predictors using the harmonic mean sample size n0
+#| message: false
+#| warning: false
 
-dat$n0 <- (dat$sample.size.control * dat$sample.size.noise.1
-                 ) / (dat$sample.size.control + dat$sample.size.noise.1)
-dat$nSE <- 1 / sqrt(dat$n0)
-dat$nV <- 1 / dat$n0
+dat <- dat %>%
+  dplyr::mutate(
+    n0  = (sample.size.control * sample.size.noise.1) /
+          (sample.size.control + sample.size.noise.1),
+    nSE = 1 / sqrt(n0),
+    nV  = 1 / n0
+  )
 ```
 
-::: panel-tabset
-## Absolute SMD (folded-normal magnitude)
+:::::: columns
+::: {.column width="49%"}
+## Absolute SMD (folded-normal; 1 / sqrt(n₀))
 
 ```{r}
 #| label: ex2-egger-abs-smd
-egger_abs <- rma.mv(
-  yi   = yi_d_abs, 
-  V    = vi_d_abs,
-  mods = ~ nSE,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| message: false
+#| warning: false
+
+egger_abs_ex2 <- rma.mv(
+  yi     = yi_d_abs,
+  V      = vi_d_abs,
+  mods   = ~ nSE,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(egger_abs)
-# bubble plot
-p11 <- bubble_plot(egger_abs, mod = "nSE", 
-                   ylab = "abs(SMD)", 
-                   xlab = "sqrt(inverse sample size)", 
-                   group = "study") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#CC6677") 
+  test   = "t"
+)
+
+summary(egger_abs_ex2)
+
+p11 <- bubble_plot(
+  egger_abs_ex2, mod = "nSE",
+  ylab = "Folded-normal SMD magnitude",
+  xlab = "sqrt(inverse sample size)",
+  group = "study"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#CC6677")
 
 p11
 ```
+:::
 
-## lnM (sqrt(1/n0))
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## lnM (SAFE; 1 / sqrt(n₀))
 
 ```{r}
 #| label: ex2-egger-lnM-safe
-egger_safe <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  mods = ~ nSE,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| message: false
+#| warning: false
+
+egger_safe_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  mods   = ~ nSE,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(egger_safe)
-# bubble plot
-p12 <- bubble_plot(egger_safe, mod = "nSE", 
-                   ylab = "lnM", 
-                   xlab = "sqrt(inverse sample size)", 
-                   group = "study",
-                   legend.pos = "bottom.right") +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = "#117733") 
+  test   = "t"
+)
+
+summary(egger_safe_ex2)
+
+p12 <- bubble_plot(
+  egger_safe_ex2, mod = "nSE",
+  ylab = "lnM (SAFE)",
+  xlab = "sqrt(inverse sample size)",
+  group = "study",
+  legend.pos = "bottom.right"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
 
 p12
 ```
+:::
+::::::
+The folded-normal SMD shows little association with precision, reflecting compression of effect magnitudes near zero. In contrast, lnM exhibits a clear positive relationship with decreasing study size, indicating greater sensitivity to size-dependent differences in effect magnitude.
 
-## lnM (1/n0)
 
+::::::: columns
+::: {.column width="25%"}
+:::
+::: {.column width="50%"}
+## lnM (SAFE; 1 / n₀)
 ```{r}
 #| label: ex2-egger-lnM-safe-2
-egger_safe2 <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  mods = ~ nV,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| message: false
+#| warning: false
+
+egger_safe2_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  mods   = ~ nV,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(egger_safe2)
-# bubble plot
-bubble_plot(egger_safe2, mod = "nV", ylab = "lnM", xlab = "Inverse sample size)", group = "study")
+  test   = "t"
+)
+
+summary(egger_safe2_ex2)
+
+bubble_plot(
+  egger_safe2_ex2, mod = "nV",
+  ylab = "lnM (SAFE)",
+  xlab = "inverse sample size",
+  group = "study"
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = "#117733")
 ```
 ::: callout-note
 ## Mapping lnM to an SMD-equivalent effect size
 ```{r}
 #| label: lnm-to-deq-approx-egger-ex2
-lnm_to_deq_approx(egger_safe2, "Egger-style model (egger_safe2)")
+#| message: false
+#| warning: false
+
+lnm_to_deq_approx(egger_safe2_ex2, "Egger-style model (Example 2; 1 / no)")
 ```
 :::
 :::
+::: {.column width="25%"}
+:::
+:::::::
 
 ### Sensitivity analysis
 
+We repeated the lnM analyses after restricting effect sizes to comparisons with total sample size n₁ + n₂ ≥ 40.
+
 ```{r}
 #| label: ex2-sensitivity-subset
+#| message: false
+#| warning: false
 
-# Sensitivity subset: retain effect sizes with total sample size >= 40
-dat_sens <- dat %>% filter((sample.size.control + sample.size.noise.1) >= 40)
+dat_sens <- dat %>%
+  dplyr::filter((sample.size.control + sample.size.noise.1) >= 40)
+
+dim(dat_sens)
 ```
 
-:::: panel-tabset
-## lnM: meta-analysis
+## lnM: meta-analysis (sensitivity subset)
 
 ```{r}
-ma_safe_sens <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| label: ex2-ma-lnM-safe-sens
+#| message: false
+#| warning: false
+
+ma_safe_sens_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat_sens,
   method = "REML",
-  test = "t")
+  test   = "t"
+)
 
-summary(ma_safe_sens)
+summary(ma_safe_sens_ex2)
+i2_ml(ma_safe_sens_ex2)
 
-
-i2_ml(ma_safe_sens)
-
-orchard_plot(ma_safe_sens,  xlab = "lnM", group = "study")
+orchard_plot(ma_safe_sens_ex2, xlab = "lnM", group = "study")
 ```
+
 ::: callout-note
 ## Mapping lnM to an SMD-equivalent effect size
+
 ```{r}
 #| label: lnm-to-deq-approx-sens-ex2
-lnm_to_deq_approx(ma_safe_sens, "Sensitivity model (ma_safe_sens)")
+#| message: false
+#| warning: false
+
+lnm_to_deq_approx(ma_safe_sens_ex2, "Sensitivity model (Example 2; n₁ + n₂ ≥ 40)")
 ```
 :::
 
-## lnM meta-regression
+### lnM: taxon model (main vs sensitivity)
 
-::: panel-tabset
-## Original lnM Egger's regression
+To compare patterns across taxa, we refit the same taxon model in the sensitivity subset.
+
+:::::: columns
+::: {.column width="49%"}
+## Main dataset
 
 ```{r}
-#| label: mod-lnM-safe-original-ex2
-mod_safe2 <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  mods = ~ taxon.for.plot - 1 + nSE,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
+#| label: ex2-tax-model-main
+#| message: false
+#| warning: false
+
+tax_model_main_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  mods   = ~ taxon.for.plot - 1 + nSE,
+  random = list(~ 1 | study, ~ 1 | case.nr),
   data   = dat,
   method = "REML",
-  test = "t")
-summary(mod_safe2)
-# comparing
-summary(mod_safe)
+  test   = "t"
+)
 
-r2_ml(mod_safe2)
+summary(tax_model_main_ex2)
+r2_ml(tax_model_main_ex2)
 
-results <- mod_results(mod_safe2, 
-                       group = "study", 
-                       mod = "taxon.for.plot", 
-                       at = list(nSE = c(0)))
+res_main <- mod_results(
+  tax_model_main_ex2,
+  group = "study",
+  mod = "taxon.for.plot",
+  at = list(nSE = 0)
+)
 
-# orchard plot
-# probably closer to the truth
-orchard_plot(results, 
-                    mod = "taxon.for.plot", 
-                    xlab = "lnM", 
-                    group = "study",
-                    trunk.size = 0.6,
-                    branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = rep("#117733", 4)) 
-```
-
-## Sensitivity lnM Egger regression
-
-```{r}
-#| label: mod-lnM-safe-sens-ex2
-
-mod_safe3 <- rma.mv(
-  yi   = yi_lnM_safe,
-  V    = vi_lnM_safe,
-  mods = ~ taxon.for.plot - 1 + nSE,
-  random =  list(
-    ~ 1 | study,
-    ~ 1 |case.nr
-  ),
-  data   = dat_sens,
-  method = "REML",
-  test = "t")
-summary(mod_safe3)
-
-
-r2_ml(mod_safe3)
-
-results2 <- mod_results(mod_safe3, 
-                       group = "study", 
-                       mod = "taxon.for.plot", 
-                       at = list(nSE = c(0)))
-
-# orchard plot
-
-orchard_plot(results2, 
-             mod = "taxon.for.plot", 
-             xlab = "lnM", 
-             group = "study",
-             trunk.size = 0.6,
-             branch.size = 5) +
-  scale_colour_manual(values = rep("grey20",8)) +
-  scale_fill_manual(values = rep("#117733", 4)) 
-
+orchard_plot(
+  res_main,
+  mod = "taxon.for.plot",
+  xlab = "lnM (SAFE)",
+  group = "study",
+  trunk.size = 0.6,
+  branch.size = 5
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = rep("#117733", 4))
 ```
 :::
-::::
+
+::: {.column width="2%"}
+:::
+
+::: {.column width="49%"}
+## Sensitivity subset (n₁ + n₂ ≥ 40)
+
+```{r}
+#| label: ex2-tax-model-sens
+#| message: false
+#| warning: false
+
+tax_model_sens_ex2 <- rma.mv(
+  yi     = yi_lnM_safe,
+  V      = vi_lnM_safe,
+  mods   = ~ taxon.for.plot - 1 + nSE,
+  random = list(~ 1 | study, ~ 1 | case.nr),
+  data   = dat_sens,
+  method = "REML",
+  test   = "t"
+)
+
+summary(tax_model_sens_ex2)
+r2_ml(tax_model_sens_ex2)
+
+res_sens <- mod_results(
+  tax_model_sens_ex2,
+  group = "study",
+  mod = "taxon.for.plot",
+  at = list(nSE = 0)
+)
+
+orchard_plot(
+  res_sens,
+  mod = "taxon.for.plot",
+  xlab = "lnM (SAFE)",
+  group = "study",
+  trunk.size = 0.6,
+  branch.size = 5
+) +
+  scale_colour_manual(values = rep("grey20", 8)) +
+  scale_fill_manual(values = rep("#117733", 4))
+```
+:::
+::::::
 
 ### Figure 4
+
+Comparison of overall meta-analytic estimates, taxon-level meta-regressions, and Egger-style small-study effect diagnostics for folded-normal SMD magnitude and lnM (SAFE) in the Kunc & Schmidt dataset.
 
 ```{r}
 #| label: ex2-figure-4
@@ -1264,11 +1750,30 @@ orchard_plot(results2,
 
 # Part II — Simulation reproduction (figures + tables)
 
-Part II reproduces all simulation-based figures and tables reported in the manuscript, using pre-computed summary outputs and, where needed, replicate-level simulation files.
+Part II reproduces all simulation-based figures and tables reported in the manuscript using:
+
+1)  a **pre-computed simulation summary** (one row per simulation setting), and\
+2)  where needed, **replicate-level outputs** (results from each Monte Carlo replicate within a simulation setting).
+
+A **simulation setting** (or *grid cell*) is one combination of: design × sample sizes × true lnM value (theta, θ). Within each setting, we ran several Monte Carlo replicates, computed lnM using the Delta plug-in and SAFE-BC, and summarised estimator performance.
+
+::: callout-note
+## Key quantities
+
+| Quantity | Definition |
+|:-----------------------------------|:-----------------------------------|
+| $\theta$ (theta) | The *true* lnM value used to generate data in the simulation setting ($x$-axis in all plots). |
+| **Bias** | $\text{mean}(\text{estimate}) - \text{true lnM}$ (computed within each setting). |
+| **RMSE** | $\sqrt{\text{mean}((\text{estimate} - \text{true lnM})^2)}$ (combines bias + variability). |
+| **Coverage** | The proportion of nominal 95% intervals that contain the true lnM (target is 0.95). |
+| **MCSE** | Monte Carlo standard error; uncertainty in simulation summaries due to a finite number of Monte Carlo replicates. |
+:::
 
 ## Figures
 
 ### Load summary results
+
+The summary file contains one row per simulation setting (design × sample sizes × θ), including bias, RMSE, coverage, failure rates, and MCSE diagnostics computed from the Monte Carlo replicates.
 
 ```{r}
 #| label: sim-load
@@ -1309,6 +1814,10 @@ base_theme <- theme_bw(11) +
 
 ### Figure 1 — Bias of point estimates
 
+Figure 1 plots point-estimate bias for each estimator within each simulation setting. Bias is computed as
+$bias = mean(estimate) - true lnM$,
+so values above 0 indicate systematic overestimation and values below 0 indicate underestimation. The dashed horizontal line marks 0 bias (ideal). Each panel corresponds to one design × sample-size combination; the x-axis (theta) is the true lnM used to generate the data.
+
 ```{r}
 #| label: fig1-bias
 #| fig-cap: "Figure 1. Point-estimate bias (estimate − true lnM). Dashed line indicates 0 bias."
@@ -1326,17 +1835,21 @@ bias_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+    scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Bias (estimate − true lnM)",
          colour = "estimator") +
     base_theme + 
-  theme(legend.position = "bottom")#+
-   # annotate("text", x = 0.7, y = max(bias_df$bias, na.rm = TRUE),
-   #          label = "Target: 0 bias\nBias typically shrinks\nas θ and n increase",
-   #          hjust = 0, vjust = 1, size = 3, colour = "grey25")
+  theme(legend.position = "bottom")
 ```
 
+
+
 ### Figure 2 — Relative bias of variance estimates
+
+Relative bias of the reported sampling variances is expressed as a percentage. In the simulation code, this is computed relative to an empirical Monte Carlo baseline variance for the SAFE-BC point estimator (computed within each setting on a common “ok” subset). The dashed line at 0% indicates an unbiased variance estimate under this baseline.
 
 ```{r}
 #| label: fig2-relbias-var
@@ -1357,17 +1870,20 @@ rb_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+        scale_color_discrete("Estimator", 
+                         labels = c("Delta" = "Delta method derived plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Relative bias of variance (%)",
          colour = "estimator") +
     base_theme + 
-  theme(legend.position = "bottom")#+
-    #annotate("text", x = 0.7, y = max(rb_df$relbias, na.rm = TRUE),
-    #         label = "+: Var too large (conservative)\n−: Var too small (anti-conservative)",
-    #         hjust = 0, vjust = 1, size = 3, colour = "grey25")
+    theme(legend.position = "bottom")
+
 ```
 
 ### Figure S1 — Coverage of nominal 95% intervals
+
+Coverage is the fraction of Monte Carlo replicates in which the nominal 95% interval contains the true lnM value. The dashed line at 0.95 is the nominal target.
 
 ```{r}
 #| label: figS1-coverage
@@ -1384,18 +1900,19 @@ cov_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+    scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = "Empirical coverage",
          colour = "estimator") +
     base_theme + 
-  theme(legend.position = "bottom")#+
-    #annotate("text", x = 0.7, y = 0.99,
-    #         label = "Target: 0.95\nBelow = under-coverage\nAbove = conservative",
-    #        hjust = 0, vjust = 1, size = 3, colour = "grey25")
-
+  theme(legend.position = "bottom")
 ```
 
 ### Figure S2 — RMSE of point estimates
+
+RMSE (root mean square error) summarizes overall point-estimate accuracy by combining bias and variability. Lower RMSE indicates better performance.
 
 ```{r}
 #| label: figS2-rmse
@@ -1411,17 +1928,19 @@ rmse_df <- dplyr::bind_rows(
     geom_line(linewidth = 0.6) +
     facet_wrap(~ facet_label, ncol = 4, nrow = 3,
                labeller = labeller(facet_label = strip_labeller)) +
+     scale_color_discrete("Estimator", 
+                         labels = c("PI" = "Plugin",
+                                   "SAFE" = "SAFE bootstrapping"))+
     labs(x = expression(theta),
          y = expression(RMSE~"("~hat(lnM)~"\u2212"~lnM~")"),
          colour = "estimator") +
     base_theme + 
-  theme(legend.position = "bottom")#+
-   #annotate("text", x = 0.7, y = max(rmse_df$rmse, na.rm = TRUE),
-    #         label = "RMSE combines\nbias + variance",
-    #         hjust = 0, vjust = 1, size = 3, colour = "grey25")
+  theme(legend.position = "bottom")
 ```
 
 ### Reading in data for Monte Carlo (MC) standard error (SE)
+
+The chunks below read **replicate-level outputs** saved during the simulation run (`raw_runs/row_###.rds`). Each file corresponds to one simulation setting (one “grid cell”), and contains one row per Monte Carlo replicate. We use these files to reconstruct additional Monte Carlo error diagnostics (MCSE) that are easier to compute from replicate-level results. ::: callout-note Each `raw_runs/row_###.rds` file corresponds to one row of the simulation parameter grid used in the driver script (i.e., one design × sample size × θ combination). :::
 
 ```{r}
 #| label: sim-mcse-load
@@ -1438,7 +1957,6 @@ if (!length(raw_files)) stop("No raw files found in: ", raw_dir)
 row_index_from_path <- function(p) as.integer(sub("^row_([0-9]{3})\\.rds$", "\\1", basename(p)))
 
 # Compute diagnostics for a single grid cell (one replicate-level data frame)
-
 
 one_raw_diag <- function(raw_df) {
   
@@ -1500,7 +2018,20 @@ results2 <- results %>%
 
 ```
 
-### Figure S3 — MCSE of bias from raw_runs
+### Figure S3 — MCSE of bias (from replicate-level files)
+
+::: callout-note
+**How to read MCSE plots (Figures S3–S4).**\
+MCSE is simulation uncertainty, not estimator uncertainty. It measures how precisely the simulation has estimated quantities like bias and mean(variance). Lower MCSE implies more stable simulation summaries.
+:::
+
+Figure S3 shows the **Monte Carlo standard error (MCSE)** of the estimated bias within each simulation setting. Here, MCSE quantifies how much the **estimated bias** would vary if we re-ran the Monte Carlo simulation again with the same number of replicates.
+
+We compute this from replicate-level outputs using the approximation:
+
+`MCSE(bias) ≈ sd(estimate) / sqrt(n_eff)`
+
+where `n_eff` is the number of usable Monte Carlo replicates in that setting (after applying the same validity filters used in the simulation summary). Smaller MCSE values indicate more precise bias estimates.
 
 ```{r}
 #| label: figS3-mcse-bias
@@ -1530,18 +2061,26 @@ mc_long <- results2 %>%
 p_mc <- ggplot(mc_long, aes(theta, value, colour = metric, group = metric)) +
   geom_line() +
   facet_wrap(~ facet_label, ncol = 4) +
+  scale_color_discrete("Estimator", 
+                         labels = c("mcse_bias_PI" = "Plugin",
+                                   "mcse_bias_SAFE" = "SAFE bootstrapping"))+
   labs(
     x = expression(theta),
     y = "MCSE of bias",
-    title = "Monte-Carlo error diagnostics: MCSE of bias (per grid cell; from raw_runs)"
+    title = "Monte-Carlo error diagnostics: MCSE of bias (per grid cell; from raw runs)"
   ) +
   base_theme + 
   theme(legend.position = "bottom")
 
 print(p_mc)
+
 ```
 
-### Figure S4 — MCSE of mean variance estimates (from summary)
+### Figure S4 — MCSE of mean(variance estimate) (from summary)
+
+Figure S4 shows the MCSE of the **mean reported sampling variance** for each estimator within each simulation setting. This is a precision diagnostic for the simulation itself: it indicates how much uncertainty remains in the simulation summary of `mean_var_delta` and `mean_var_safe` due to finite Monte Carlo replicates.
+
+In practice, smaller MCSE values mean the simulation is sufficiently large to estimate average variance behavior reliably for that setting; larger values indicate that more Monte Carlo replicates would be needed to stabilize the mean variance estimate.
 
 ```{r}
 #| label: figS4-mcse-varmean
@@ -1574,21 +2113,18 @@ print(p_var_mcse)
 
 ## Tables for the supplement
 
-
-
 ### Table S1 — Method feasibility and stability
 
-Table S1 summarises feasibility and numerical stability diagnostics for lnM estimation across simulation designs and sample-size combinations. All quantities are summarised across values of the true lnM (θ) within each design × (n₁, n₂) facet.
-Medians describe typical behaviour across θ, whereas maxima highlight worst-case performance near parameter boundaries.
+Table S1 summarizes feasibility and stability diagnostics for lnM estimation across simulation settings. Values are summarized across theta within each design × (n1, n2) facet. Medians represent typical behavior across theta, while maxima highlight worst-case behavior near boundary regions.
 
-
-**Column definitions.**  
-- **θ_min, θ_max**: Minimum and maximum true lnM values evaluated in the simulation grid for a given design × sample-size combination.  
-- **delta_fail_median**: Median proportion of simulation replicates (across θ) for which the Delta plug-in lnM estimator was undefined (e.g. due to boundary violations).  
-- **safe_fail_median**: Median proportion of simulation replicates for which SAFE failed to return a usable lnM estimate.  
-- **SAFE_ok_median**: Median proportion of replicates in which SAFE returned a valid (accepted) bootstrap estimate.  
-- **delta_cap_median**: Median proportion of replicates in which the Delta-method sampling variance was capped for numerical stability.  
-- **delta_fail_max, safe_fail_max, delta_cap_max**: Worst-case (maximum) values of the corresponding metrics across θ, highlighting boundary regions where estimator behaviour deteriorates.
+| Variable Name | Definition |
+|:-----------------------------------|:-----------------------------------|
+| `θ_min`, `θ_max` | Minimum and maximum true lnM values evaluated in the simulation grid for a given design × sample-size combination. |
+| `delta_fail_median` | Median proportion of simulation replicates (across $\theta$) for which the Delta plug-in lnM estimator was undefined (e.g., due to boundary violations). |
+| `safe_fail_median` | Median proportion of simulation replicates for which SAFE failed to return a usable lnM estimate. |
+| `SAFE_ok_median` | Median proportion of replicates in which SAFE returned a valid (accepted) bootstrap estimate. |
+| `delta_cap_median` | Median proportion of replicates in which the Delta-method sampling variance was capped for numerical stability. |
+| `delta_fail_max`, `safe_fail_max`, `delta_cap_max` | Worst-case (maximum) values of the corresponding metrics across $\theta$, highlighting boundary regions where estimator behavior deteriorates. |
 
 ::: {.callout-note appearance="simple"}
 ```{r}
@@ -1631,15 +2167,15 @@ kable(tab1_stability, digits = 3,
   kableExtra::scroll_box(width = "100%", height = "400px")
 ```
 :::
+
 ### Table S2 — SAFE bootstrap acceptance (kept/tried)
 
-Table S2 summarises the bootstrap acceptance rate of SAFE across simulation designs and sample-size combinations. 
-The acceptance rate is defined as the proportion of bootstrap resamples retained (“kept”) after stability and feasibility checks, relative to the total number attempted.
-Quantiles describe the distribution of acceptance rates across values of the true lnM (θ), highlighting both typical and worst-case performance.
+Table S2 summarizes the SAFE bootstrap acceptance rate (“kept / tried”) across theta within each facet. Quantiles show how acceptance varies across theta, including worst-case regions where accepted draws are rare.
 
-**Column definitions.**  
-- **q0, q25, q50, q75, q100**: Minimum, 25th percentile, median, 75th percentile, and maximum SAFE bootstrap acceptance rates across values of θ within each facet.  
-- **mean**: Mean SAFE bootstrap acceptance rate across θ.  
+| Variable Name | Definition |
+|:-----------------------------------|:-----------------------------------|
+| `q0`, `q25`, `q50`, `q75`, `q100` | Minimum, 25th percentile, median, 75th percentile, and maximum SAFE bootstrap acceptance rates across values of $\theta$ within each facet. |
+| `mean` | Mean SAFE bootstrap acceptance rate across $\theta$. |
 
 ::: {.callout-note appearance="simple"}
 ```{r}
@@ -1664,20 +2200,22 @@ kable(tab2_accept, digits = 4,
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))%>%
   kableExtra::scroll_box(width = "100%", height = "400px")
 ```
+
 Acceptance rate is defined as the proportion of bootstrap resamples retained after SAFE’s feasibility and stability checks. Lower values indicate reduced effective bootstrap sample sizes, typically occurring near parameter boundaries or under small sample sizes.
 :::
+
 ### Table S3 — MCSE diagnostics
-Table S3 summarises Monte Carlo precision diagnostics for the simulation study.
-Reported values correspond to the maximum Monte Carlo standard error (MCSE) observed across values of the true lnM (θ) within each design × (n₁, n₂) facet, providing a conservative assessment of simulation uncertainty.
 
+Table S3 summarizes Monte Carlo precision. Values are the maximum MCSE observed across theta within each facet, giving a conservative measure of simulation uncertainty.
 
-**Column definitions.**  
-- **mcse_bias_PI_max**: Maximum Monte Carlo standard error of the Delta-method lnM bias estimate across θ.  
-- **mcse_bias_SAFE_max**: Maximum Monte Carlo standard error of the SAFE lnM bias estimate across θ.  
-- **mcse_var_PI_max**: Maximum Monte Carlo standard error of the mean Delta-method variance estimate across θ.  
-- **mcse_var_SAFE_max**: Maximum Monte Carlo standard error of the mean SAFE variance estimate across θ.  
+| Variable Name | Definition |
+|:-----------------------------------|:-----------------------------------|
+| `mcse_bias_PI_max` | Maximum Monte Carlo standard error of the Delta-method lnM bias estimate across $\theta$. |
+| `mcse_bias_SAFE_max` | Maximum Monte Carlo standard error of the SAFE lnM bias estimate across $\theta$. |
+| `mcse_var_PI_max` | Maximum Monte Carlo standard error of the mean Delta-method variance estimate across $\theta$. |
+| `mcse_var_SAFE_max` | Maximum Monte Carlo standard error of the mean SAFE variance estimate across $\theta$. |
 
-
+: Column definitions for Monte Carlo standard errors {#tbl-mcse-defs}
 
 ::: {.callout-note appearance="simple"}
 ```{r}
@@ -1707,7 +2245,13 @@ kable(tab3_mcse, digits = 5,
   kableExtra::scroll_box(width = "100%", height = "400px")
 
 ```
+
 MCSE values quantify simulation uncertainty due to a finite number of Monte Carlo replicates; smaller values indicate more precise simulation estimates.
+:::
+
+## References
+
+::: {#refs}
 :::
 
 # Session info
