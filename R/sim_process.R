@@ -45,8 +45,6 @@ library(kableExtra)
 library(grid)      # needed for manual legend placement
 library(pbapply)   # for pblapply in the raw-run diagnostics section
 
-results <- readRDS(here("results","lnM_summary_SAFEfun_2025-12-21.rds"))
-
 # ------------------------- load summary results -----------------------------
 # This RDS is the collapsed output from the simulation driver:
 # one row per grid cell (theta x design x (n1,n2)).

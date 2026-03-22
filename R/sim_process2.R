@@ -349,7 +349,7 @@ p_bias_absd <- ggplot2::ggplot(absd_bias_dat, ggplot2::aes(x = theta, y = bias, 
     )
   ) +
   ggplot2::labs(
-    x = expression(theta ~ "(= true folded-normal target here)"),
+    x = expression(theta),
     y = "Bias of point estimator",
     title = expression("Bias of " * abs(d) * " estimators")
   ) +
@@ -366,7 +366,7 @@ p_var_absd <- ggplot2::ggplot(absd_var_dat, ggplot2::aes(x = theta, y = rel_bias
     )
   ) +
   ggplot2::labs(
-    x = expression(theta ~ "(= true folded-normal target here)"),
+    x = expression(theta),
     y = "Relative bias of variance estimator (%)",
     title = expression("Relative bias of variance estimators for " * abs(d))
   ) +
@@ -383,7 +383,7 @@ p_cov_absd <- ggplot2::ggplot(absd_cover_dat, ggplot2::aes(x = theta, y = covera
     )
   ) +
   ggplot2::labs(
-    x = expression(theta ~ "(= true folded-normal target here)"),
+    x = expression(theta),
     y = "Coverage of 95% Wald interval",
     title = expression("Coverage of " * abs(d) * " estimators")
   ) +
@@ -399,7 +399,7 @@ p_rmse_absd <- ggplot2::ggplot(absd_rmse_dat, ggplot2::aes(x = theta, y = rmse, 
     )
   ) +
   ggplot2::labs(
-    x = expression(theta ~ "(= true folded-normal target here)"),
+    x = expression(theta),
     y = "RMSE",
     title = expression("RMSE of " * abs(d) * " estimators")
   ) +
@@ -852,3 +852,4 @@ if (!is.null(absd_results2) || has_absd_var_mcse) {
   
   readr::write_csv(tab_mcse_absd, here("data", "tab_mcse_absd.csv"))
 }
+
