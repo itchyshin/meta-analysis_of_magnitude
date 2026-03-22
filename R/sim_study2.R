@@ -32,7 +32,7 @@
 ##
 ## Main outputs per parameter set
 ##   For each combination of theta, sample sizes, and design, we record:
-##     - bias and RMSE of point estimators relative to true |d|
+##     - bias and RMSE of point estimators relative to the folded-normal target
 ##     - mean reported variances
 ##     - relative bias of variance estimators against Monte Carlo variance
 ##     - coverage of nominal 95% Wald intervals
@@ -56,6 +56,19 @@
 ##   The overall structure, sectioning, helper philosophy, and summary logic
 ##   are deliberately kept parallel to the attached lnM simulation file, so
 ##   that the two scripts are easy to compare side by side.
+##
+## Important compatibility note
+##   Minimal changes have been made so that the downstream processing script
+##   `sim_process2.R` can continue to run without modification.
+##   Therefore, output column names such as:
+##     - absd_bias
+##     - fn_bias
+##     - rmse_absd
+##     - rmse_fn
+##     - cover_absd
+##     - cover_fn
+##   are retained, even though they are now evaluated against the
+##   folded-normal target (true_fn_mean) rather than against |theta|.
 ########################################################################
 
 library(MASS)        # mvrnorm() for paired-data simulation
@@ -192,14 +205,21 @@ fn_var <- function(mu, var) {
   posify(mu^2 + var - m^2)
 }
 
-## -------- 3. True target and theoretical FN benchmark ----------------
+## -------- 3. Underlying SMD magnitude and folded-normal target -------
 ##
-## In this simulation design, sigma1 = sigma2 = 1, so true signed d = theta.
-## Therefore the target magnitude is:
+## In this simulation design, sigma1 = sigma2 = 1, so true signed d = theta
+## and the underlying population SMD magnitude is:
 ##   true_absd = |theta|
 ##
-## We also compute the theoretical folded-normal mean/variance implied by the
-## large-sample Normal approximation to signed d_hat.
+## However, when magnitude is defined through the folded-normal formulation,
+## the relevant target for point estimation is not |theta| itself, but the
+## folded-normal mean implied by:
+##   d_hat ~ Normal(theta, true_vd)
+##
+## Therefore:
+##   - true_absd is retained as the underlying population SMD magnitude
+##   - true_fn_mean is the main evaluation target for the point estimators
+##   - true_fn_var is the corresponding theoretical variance benchmark
 ##
 ## These “true” variance formulas are not used to construct the estimators.
 ## Instead, they are used as external benchmarks for comparison.
@@ -357,7 +377,7 @@ runner_absd <- function(i) {
   sd0 <- 1
   
   true_absd <- abs(p$theta)
-  # target magnitude, since sigma1=sigma2=1
+  # underlying population SMD magnitude, since sigma1=sigma2=1
   
   true_vd <- if (p$design == "indep") {
     vd_true_ind(p$theta, p$n1, p$n2)
@@ -368,7 +388,11 @@ runner_absd <- function(i) {
   ## Theoretical folded-normal moments under Normal approx to signed d_hat
   true_fn_mean <- fn_mean(p$theta, true_vd)
   true_fn_var  <- fn_var(p$theta, true_vd)
-  # these are “benchmark” FN quantities under the population truth
+  # these are the folded-normal target mean and variance under the
+  # population-level Normal approximation to signed d_hat
+  
+  target_mag <- true_fn_mean
+  # main target for evaluating point estimators in this script
   
   M <- matrix(
     NA_real_, 7, K_repl,
@@ -406,9 +430,9 @@ runner_absd <- function(i) {
   # These Monte Carlo variances are treated as the empirical “truth”
   # for evaluating the variance estimators.
   
-  ## 95% Wald coverage against true |d| target
-  cover_absd <- abs(M["absd_pt", ] - true_absd) <= 1.96 * sqrt(M["absd_var", ])
-  cover_fn   <- abs(M["fn_pt",   ] - true_absd) <= 1.96 * sqrt(M["fn_var",   ])
+  ## 95% Wald coverage against folded-normal target
+  cover_absd <- abs(M["absd_pt", ] - target_mag) <= 1.96 * sqrt(M["absd_var", ])
+  cover_fn   <- abs(M["fn_pt",   ] - target_mag) <= 1.96 * sqrt(M["fn_var",   ])
   # Wald intervals are constructed on the transformed scale for each estimator
   
   out <- data.frame(
@@ -429,11 +453,12 @@ runner_absd <- function(i) {
     absd_mean   = mean(M["absd_pt", ], na.rm = TRUE),
     fn_mean_est = mean(M["fn_pt", ], na.rm = TRUE),
     
-    ## Bias relative to the target |d_true| = |theta|
-    absd_bias = mean(M["absd_pt", ], na.rm = TRUE) - true_absd,
-    fn_bias   = mean(M["fn_pt",   ], na.rm = TRUE) - true_absd,
+    ## Bias relative to the folded-normal target
+    absd_bias = mean(M["absd_pt", ], na.rm = TRUE) - target_mag,
+    fn_bias   = mean(M["fn_pt",   ], na.rm = TRUE) - target_mag,
     
     ## Also compare MC means to the theoretical folded-normal benchmark
+    ## (retained for compatibility / quick checking; now duplicates bias)
     absd_vs_fn_mean = mean(M["absd_pt", ], na.rm = TRUE) - true_fn_mean,
     fn_vs_fn_mean   = mean(M["fn_pt",   ], na.rm = TRUE) - true_fn_mean,
     
@@ -471,9 +496,9 @@ runner_absd <- function(i) {
       NA_real_
     },
     
-    ## RMSE relative to true |d|
-    rmse_absd = sqrt(mean((M["absd_pt", ] - true_absd)^2, na.rm = TRUE)),
-    rmse_fn   = sqrt(mean((M["fn_pt",   ] - true_absd)^2, na.rm = TRUE)),
+    ## RMSE relative to folded-normal target
+    rmse_absd = sqrt(mean((M["absd_pt", ] - target_mag)^2, na.rm = TRUE)),
+    rmse_fn   = sqrt(mean((M["fn_pt",   ] - target_mag)^2, na.rm = TRUE)),
     
     ## Coverage
     cover_absd = mean(cover_absd, na.rm = TRUE),
@@ -483,8 +508,8 @@ runner_absd <- function(i) {
     fail_prop = mean(M["fail", ], na.rm = TRUE),
     
     ## MCSEs
-    mcse_bias_absd   = mcse_mean(M["absd_pt", ] - true_absd),
-    mcse_bias_fn     = mcse_mean(M["fn_pt",   ] - true_absd),
+    mcse_bias_absd   = mcse_mean(M["absd_pt", ] - target_mag),
+    mcse_bias_fn     = mcse_mean(M["fn_pt",   ] - target_mag),
     mcse_varbar_absd = mcse_mean(M["absd_var", ]),
     mcse_varbar_fn   = mcse_mean(M["fn_var",   ]),
     mcse_cover_absd  = mcse_prop(cover_absd),
