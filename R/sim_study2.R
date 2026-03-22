@@ -62,7 +62,7 @@ mcse_prop <- function(x) {
   sqrt(p * (1 - p) / length(x))
 }
 
-## -------- 1. Cohen's d and variance formulas -------------------------
+## -------- 1. d and variance formulas -------------------------
 ##
 ## Independent groups:
 ##   d = (x1bar - x2bar) / s_pooled
@@ -78,7 +78,7 @@ mcse_prop <- function(x) {
 ##
 ##   This keeps the true target aligned with theta when sigma1 = sigma2 = 1.
 
-cohen_d_ind <- function(x1bar, x2bar, s1, s2, n1, n2) {
+d_ind <- function(x1bar, x2bar, s1, s2, n1, n2) {
   sp2 <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
   sp  <- sqrt(posify(sp2))
   d   <- (x1bar - x2bar) / sp
@@ -88,7 +88,7 @@ cohen_d_ind <- function(x1bar, x2bar, s1, s2, n1, n2) {
   c(d = d, vd = posify(vd))
 }
 
-cohen_d_dep <- function(x1bar, x2bar, s1, s2, n, rho) {
+d_dep <- function(x1bar, x2bar, s1, s2, n, rho) {
   sav2 <- (s1^2 + s2^2) / 2
   sav  <- sqrt(posify(sav2))
   d    <- (x1bar - x2bar) / sav
@@ -171,9 +171,9 @@ one_rep_absd <- function(mu1, mu2, sd1, sd2,
   s2    <- sd(x2)
   
   est <- if (is.null(n2)) {
-    cohen_d_dep(x1bar, x2bar, s1, s2, n1, rho_hat)
+    d_dep(x1bar, x2bar, s1, s2, n1, rho_hat)
   } else {
-    cohen_d_ind(x1bar, x2bar, s1, s2, n1, n2)
+    d_ind(x1bar, x2bar, s1, s2, n1, n2)
   }
   
   d_hat  <- unname(est["d"])
